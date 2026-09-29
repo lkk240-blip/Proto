@@ -4,8 +4,11 @@ import { CAT, MASK } from '../systems/physics.js';
 import { hasLineOfSight } from '../systems/Los.js';
 import { Sfx } from '../systems/Sfx.js';
 
-// 경비(사람). 상태: patrol(순찰) → suspect(의심 "?") → chase(추격 "!") → search(수색) → return(순찰 복귀)
+// 적 대형 괴수(스펙의 "경비").
+// 상태: sleep(잠 "Zzz") → waking(깨는 중) → return/patrol(로밍) → tosleep(잠자리로 돌아감) → sleep ...
+//       로밍 중 감지하면 suspect(의심 "?") → chase(추격 "!") → search(수색) → return
 // gloat: 몬스터를 잡은 뒤 의기양양 정지
+// 시야는 화면에 그리지 않는다(디버그 옵션 제외). 눈이 향하는 쪽이 보는 방향.
 export default class Guard {
   constructor(scene, x, y, route) {
     this.scene = scene;
@@ -15,8 +18,14 @@ export default class Guard {
       friction: 0, frictionStatic: 0, frictionAir: 0, inertia: Infinity, label: 'guard',
       collisionFilter: { category: CAT.GUARD, mask: MASK.GUARD, group: 0 },
     });
-    this.facingAngle = 0;
-    this.state = 'return';
+    this.facingAngle = Math.random() * Math.PI * 2;
+    this.sleepSpot = { x, y };
+    this.state = 'sleep';
+    this.sleepTimer = Phaser.Math.FloatBetween(CONFIG.guard.sleepMin, CONFIG.guard.sleepMax);
+    this.roamTimer = 0;
+    this.wake = 0;            // 잠든 동안의 깸 게이지
+    this.alerted = false;     // 소음/접촉으로 깼는지(자연스럽게 깬 게 아닌지)
+    this.pendingSuspicion = 0;
     this.suspicion = 0;
     this.wpIndex = 0;
     this.wpDir = 1;
@@ -41,33 +50,73 @@ export default class Guard {
     const s = this.scene;
     this.cone = s.add.graphics().setDepth(4);
     this.view = s.add.container(this.x, this.y).setDepth(12);
-    this.bodyG = s.add.graphics();
     const r = this.radius;
-    this.bodyG.fillStyle(0x3d6bd6, 1);
-    this.bodyG.lineStyle(3, 0x0e1f4d, 1);
-    this.bodyG.fillRect(-r, -r, r * 2, r * 2);
-    this.bodyG.strokeRect(-r, -r, r * 2, r * 2);
-    // 모자/얼굴 방향 표시
-    this.bodyG.fillStyle(0xffe0bd, 1);
-    this.bodyG.fillRect(r * 0.2, -r * 0.5, r * 0.7, r);
-    this.bodyG.fillStyle(0x000000, 1);
-    this.bodyG.fillRect(r * 0.55, -r * 0.35, 3, 3);
-    this.bodyG.fillRect(r * 0.55, r * 0.2, 3, 3);
+    this.shadow = s.add.ellipse(0, r * 0.55, r * 2.3, r * 1.0, 0x000000, 0.3);
+    this.bodyC = s.add.container(0, 0); // 숨쉬기/회전용
+    this.bodyG = s.add.graphics();
+    // 등(털 뭉치) + 몸통
+    this.bodyG.fillStyle(0x3d2a52, 1);
+    for (let i = 0; i < 7; i++) {
+      const a = Math.PI * 0.55 + (i / 6) * Math.PI * 0.9;
+      this.bodyG.fillCircle(Math.cos(a) * r * 0.85, Math.sin(a) * r * 0.85, r * 0.42);
+    }
+    this.bodyG.fillStyle(0x5b3f7a, 1);
+    this.bodyG.lineStyle(4, 0x221430, 1);
+    this.bodyG.fillCircle(0, 0, r);
+    this.bodyG.strokeCircle(0, 0, r);
+    this.bodyG.fillStyle(0x7a5a9c, 1);
+    this.bodyG.fillEllipse(r * 0.35, 0, r * 1.0, r * 1.2); // 주둥이 쪽 밝은 털
+    // 뿔 두 개
+    this.bodyG.fillStyle(0xe8dcc0, 1);
+    this.bodyG.lineStyle(2, 0x5a4a30, 1);
+    for (const sgn of [-1, 1]) {
+      this.bodyG.fillTriangle(r * 0.2, sgn * r * 0.55, r * 0.55, sgn * r * 0.75, r * 0.05, sgn * r * 1.35);
+      this.bodyG.strokeTriangle(r * 0.2, sgn * r * 0.55, r * 0.55, sgn * r * 0.75, r * 0.05, sgn * r * 1.35);
+    }
+    this.eyes = s.add.graphics();
+    this.bodyC.add([this.bodyG, this.eyes]);
+    this.drawEyes(false);
+
     const ts = { fontFamily: 'sans-serif', fontStyle: 'bold', stroke: '#000000', strokeThickness: 5 };
-    this.icon = s.add.text(0, -r - 20, '', { ...ts, fontSize: '30px', color: '#ffd23f' }).setOrigin(0.5);
-    this.meter = s.add.graphics();
-    this.debugText = s.add.text(0, r + 12, '', { ...ts, fontSize: '12px', color: '#ffffff', strokeThickness: 3 }).setOrigin(0.5);
-    this.view.add([this.bodyG, this.meter, this.icon, this.debugText]);
-    // "?"/"!" 는 안개 위에도 보이게 별도 깊이
+    this.debugText = s.add.text(0, r + 14, '', { ...ts, fontSize: '12px', color: '#ffffff', strokeThickness: 3 }).setOrigin(0.5);
+    this.view.add([this.shadow, this.bodyC, this.debugText]);
+    // "?" "!" "Zzz" 와 게이지는 다른 물체 위에 보이도록 별도 층
     this.iconLayer = s.add.container(this.x, this.y).setDepth(55);
-    this.view.remove(this.icon);
-    this.view.remove(this.meter);
+    this.icon = s.add.text(0, -r - 22, '', { ...ts, fontSize: '30px', color: '#ffd23f' }).setOrigin(0.5);
+    this.meter = s.add.graphics();
     this.iconLayer.add([this.meter, this.icon]);
+    this.breath = s.tweens.add({ targets: this.bodyC, scaleX: 1.06, scaleY: 0.95, duration: 1400, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+  }
+
+  drawEyes(open) {
+    const g = this.eyes;
+    const r = this.radius;
+    g.clear();
+    for (const sgn of [-1, 1]) {
+      const ex = r * 0.62, ey = sgn * r * 0.3;
+      if (open) {
+        g.fillStyle(0xfff36b, 1);
+        g.fillCircle(ex, ey, r * 0.17);
+        g.fillStyle(0x000000, 1);
+        g.fillCircle(ex + r * 0.05, ey, r * 0.08);
+      } else {
+        g.lineStyle(3, 0x1a0f24, 1);
+        g.lineBetween(ex - r * 0.1, ey - r * 0.12, ex + r * 0.08, ey + r * 0.12);
+      }
+    }
+    this.eyesOpen = open;
+  }
+
+  get asleep() {
+    return this.state === 'sleep' || this.state === 'waking';
   }
 
   speed() {
     const G = CONFIG.guard;
-    return { patrol: G.patrolSpeed, return: G.patrolSpeed, suspect: G.suspectSpeed, chase: G.chaseSpeed, search: G.searchSpeed, gloat: 0 }[this.state];
+    return {
+      patrol: G.patrolSpeed, return: G.patrolSpeed, tosleep: G.patrolSpeed, suspect: G.suspectSpeed,
+      chase: G.chaseSpeed, search: G.searchSpeed, gloat: 0, sleep: 0, waking: 0,
+    }[this.state];
   }
 
   setState(st) {
@@ -90,7 +139,23 @@ export default class Guard {
       this.searchPoint = null;
     } else if (st === 'return') {
       this.wpIndex = this.nearestWaypoint();
+    } else if (st === 'sleep') {
+      this.sleepTimer = Phaser.Math.FloatBetween(CONFIG.guard.sleepMin, CONFIG.guard.sleepMax);
+      this.wake = 0;
+      this.suspicion = 0;
+      this.alerted = false;
+      this.scene.fx.popText(this.x, this.y - this.radius - 30, '쿨...', { color: '#a9c7ff', size: 18, depth: 56 });
+    } else if (st === 'waking') {
+      this.scene.tweens.add({ targets: this.bodyC, scaleX: 1.25, scaleY: 1.25, duration: 120, yoyo: true });
+      if (this.alerted) {
+        this.pop('!?', '#ffd23f');
+        this.scene.fx.shake(120, 0.005);
+        Sfx.suspect();
+      } else {
+        this.scene.fx.popText(this.x, this.y - this.radius - 30, '하암~', { color: '#d9c8ff', size: 20, depth: 56 });
+      }
     }
+    if (this.eyesOpen !== (st !== 'sleep')) this.drawEyes(st !== 'sleep');
     return prev;
   }
 
@@ -113,7 +178,26 @@ export default class Guard {
     if (this.state === 'gloat') return;
     const G = CONFIG.guard;
     const d = Phaser.Math.Distance.Between(this.x, this.y, n.x, n.y);
-    if (d > n.size + G.hearingRadius) return;
+    if (d > n.size + G.hearingRadius + this.radius) return;
+    if (this.state === 'sleep') {
+      // 잘 때는 깸 게이지가 차야 깬다(작은 소리는 뒤척이기만)
+      this.wake += n.size * G.sleepHearingMul;
+      this.lastKnown = { x: n.x, y: n.y };
+      if (this.wake >= G.wakeThreshold) {
+        this.alerted = true;
+        this.pendingSuspicion = 60;
+        this.setState('waking');
+      } else {
+        this.scene.fx.popText(this.x, this.y - this.radius - 26, '음냐..', { color: '#bfb3d9', size: 14, rise: 16, duration: 600, depth: 56 });
+        this.scene.tweens.add({ targets: this.bodyC, angle: { from: -8, to: 8 }, duration: 90, yoyo: true, repeat: 1, onComplete: () => { this.bodyC.angle = 0; } });
+      }
+      return;
+    }
+    if (this.state === 'waking') {
+      this.lastKnown = { x: n.x, y: n.y };
+      if (this.alerted) this.pendingSuspicion = Math.min(100, this.pendingSuspicion + n.size * G.hearingMul);
+      return;
+    }
     this.suspicion = Math.min(100, this.suspicion + n.size * G.hearingMul);
     this.lastKnown = { x: n.x, y: n.y };
     this.path = null;
@@ -141,7 +225,24 @@ export default class Guard {
 
     // --- 감지 ---
     let seen = null;
-    if (this.state !== 'gloat') {
+    if (this.state === 'sleep') {
+      this.wake = Math.max(0, this.wake - G.wakeDecay * dt);
+      this.sleepTimer -= dt;
+      if (this.sleepTimer <= 0) { this.alerted = false; this.setState('waking'); }
+    } else if (this.state === 'waking') {
+      if (this.stateTimer >= G.groggyTime) {
+        if (this.alerted) {
+          this.suspicion = this.pendingSuspicion;
+          this.roamTimer = Phaser.Math.FloatBetween(G.roamMin, G.roamMax);
+          if (this.suspicion >= 100) this.setState('chase');
+          else this.setState('suspect');
+        } else {
+          this.roamTimer = Phaser.Math.FloatBetween(G.roamMin, G.roamMax);
+          this.setState('return');
+        }
+      }
+    }
+    if (this.state !== 'gloat' && !this.asleep) {
       let gain = 0;
       for (const m of this.scene.monsters) {
         if (m.stunned) continue;
@@ -162,6 +263,7 @@ export default class Guard {
     switch (this.state) {
       case 'patrol':
       case 'return':
+      case 'tosleep':
       case 'search':
         if (this.suspicion >= 100) this.setState('chase');
         else if (seen && this.suspicion >= G.suspectThreshold) this.setState('suspect');
@@ -179,6 +281,14 @@ export default class Guard {
     // --- 행동 ---
     let target = null;
     if (this.state === 'patrol' || this.state === 'return') {
+      // 로밍 시간이 다 되면 잠자리로
+      this.roamTimer -= dt;
+      if (this.roamTimer <= 0) this.setState('tosleep');
+    }
+    if (this.state === 'tosleep') {
+      target = this.sleepSpot;
+      if (this.reached(target)) this.setState('sleep');
+    } else if (this.state === 'patrol' || this.state === 'return') {
       const wp = this.route.points[this.wpIndex];
       target = wp;
       if (Phaser.Math.Distance.Between(this.x, this.y, wp.x, wp.y) < 10) {
@@ -297,7 +407,19 @@ export default class Guard {
     if (this.state === 'gloat') return;
     for (const m of this.scene.monsters) {
       if (m.stunned || m.graceTimer > 0) continue;
-      if (Phaser.Math.Distance.Between(this.x, this.y, m.x, m.y) < this.radius + m.radius + 3) {
+      const touching = Phaser.Math.Distance.Between(this.x, this.y, m.x, m.y) < this.radius + m.radius + 3;
+      if (touching && this.asleep) {
+        // 자는 괴수를 건드리면 벌떡 깨서 바로 추격
+        this.lastKnown = { x: m.x, y: m.y };
+        this.pendingSuspicion = 100;
+        if (this.state === 'sleep') {
+          this.alerted = true;
+          this.setState('waking');
+          this.scene.fx.popText(this.x, this.y - this.radius - 44, '크앙?!', { color: '#ff9b9b', size: 24, depth: 56 });
+        }
+        continue;
+      }
+      if (touching) {
         if (m.stun(this.x, this.y)) {
           this.setState('gloat');
           this.scene.fx.popText(this.x, this.y - 40, '잡았다!', { color: '#9fc3ff', size: 22, depth: 56 });
@@ -314,8 +436,7 @@ export default class Guard {
     const G = CONFIG.guard;
     const g = this.cone;
     g.clear();
-    const show = this.visible || CONFIG.debug.showCones;
-    if (!show || this.state === 'gloat') return;
+    if (!CONFIG.debug.showCones || this.state === 'gloat' || this.asleep) return;
     const color = { chase: 0xff4d4d, suspect: 0xffd23f, search: 0xffa23f }[this.state] || 0xffffff;
     const half = Phaser.Math.DegToRad(G.visionAngle / 2);
     const rays = 24;
@@ -340,28 +461,39 @@ export default class Guard {
   syncView() {
     this.view.setPosition(this.x, this.y);
     this.iconLayer.setPosition(this.x, this.y);
-    this.bodyG.rotation = this.facingAngle;
-    this.view.setVisible(this.visible || CONFIG.debug.showCones);
+    this.bodyC.rotation = this.facingAngle;
     this.drawCone();
 
-    // "?"/"!" 와 의심 게이지(안개 속에서도 보여서 위험을 미리 읽을 수 있게)
+    // 아이콘: 잠 "Zzz", 깨는 중 "!?", 의심/수색 "?", 추격 "!", 잡은 뒤 "♪"
     const st = this.state;
-    let icon = '';
-    if (st === 'chase') icon = '!';
-    else if (st === 'suspect') icon = '?';
-    else if (st === 'search') icon = '?';
-    else if (st === 'gloat') icon = '♪';
-    this.icon.setText(icon);
-    this.icon.setColor(st === 'chase' ? '#ff4d4d' : st === 'gloat' ? '#9fc3ff' : st === 'search' ? '#ffa23f' : '#ffd23f');
+    const icons = { sleep: 'Zzz', waking: this.alerted ? '!?' : '…', suspect: '?', search: '?', chase: '!', gloat: '♪' };
+    const colors = { sleep: '#a9c7ff', waking: '#ffd23f', suspect: '#ffd23f', search: '#ffa23f', chase: '#ff4d4d', gloat: '#9fc3ff' };
+    this.icon.setText(icons[st] || '');
+    this.icon.setColor(colors[st] || '#ffffff');
+    this.icon.setFontSize(st === 'sleep' ? 20 : 30);
+    if (st === 'sleep') {
+      const t = this.scene.time.now * 0.002;
+      this.icon.setPosition(Math.sin(t) * 6 + 10, -this.radius - 18 - (t % 1) * 6);
+    } else {
+      this.icon.setPosition(0, -this.radius - 22);
+    }
+    this.breath.timeScale = st === 'sleep' ? 1 : 3;
+
     const m = this.meter;
     m.clear();
-    if (this.suspicion > 1 && st !== 'chase' && st !== 'gloat') {
-      const w = 30;
+    const w = 40, by = -this.radius - 8;
+    if (st === 'sleep' && this.wake > 1) {
+      // 깸 게이지(보라색): 가득 차면 깬다
       m.fillStyle(0x000000, 0.6);
-      m.fillRect(-w / 2 - 1, -this.radius - 8, w + 2, 6);
+      m.fillRect(-w / 2 - 1, by - 1, w + 2, 6);
+      m.fillStyle(0xc49bff, 1);
+      m.fillRect(-w / 2, by, (w * Math.min(this.wake, CONFIG.guard.wakeThreshold)) / CONFIG.guard.wakeThreshold, 4);
+    } else if (this.suspicion > 1 && st !== 'chase' && st !== 'gloat' && !this.asleep) {
+      m.fillStyle(0x000000, 0.6);
+      m.fillRect(-w / 2 - 1, by - 1, w + 2, 6);
       m.fillStyle(this.suspicion >= CONFIG.guard.suspectThreshold ? 0xffd23f : 0xffffff, 1);
-      m.fillRect(-w / 2, -this.radius - 7, (w * this.suspicion) / 100, 4);
+      m.fillRect(-w / 2, by, (w * this.suspicion) / 100, 4);
     }
-    this.debugText.setText(CONFIG.debug.showSuspicion ? `${this.state} ${this.suspicion.toFixed(0)}` : '');
+    this.debugText.setText(CONFIG.debug.showSuspicion ? `${st} ${this.suspicion.toFixed(0)}${st === 'sleep' ? ' 깸' + this.wake.toFixed(0) : ''}` : '');
   }
 }

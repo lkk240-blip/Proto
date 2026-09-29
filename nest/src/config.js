@@ -12,8 +12,9 @@ export const DEFAULT_CONFIG = {
   camera: {
     followLerp: 0.12,      // 0~1, 클수록 카메라가 빨리 따라붙음
     switchPanMs: 250,      // 몬스터 교체 시 카메라 이동 시간(ms)
+    soloZoom: 0.85,        // 1인 모드 카메라 줌(작을수록 넓게 보임)
     duoMinZoom: 0.55,      // 2인 모드: 가장 멀리 뺐을 때 줌
-    duoMaxZoom: 1.0,       // 2인 모드: 가장 가까이 당겼을 때 줌
+    duoMaxZoom: 0.9,       // 2인 모드: 가장 가까이 당겼을 때 줌
     duoPadding: 260,       // 2인 모드: 두 몬스터 주변 여백
   },
 
@@ -88,22 +89,32 @@ export const DEFAULT_CONFIG = {
     break: 340,            // 깨질 때 소음
   },
 
+  // 적 괴수(스펙의 "경비"). 평소엔 잠자리에서 자다가, 소음에 깨거나 푹 자고 일어나면 로밍한다.
   guard: {
-    radius: 14,
-    patrolSpeed: 95,
-    suspectSpeed: 115,
-    chaseSpeed: 185,       // 추격 속도
-    searchSpeed: 80,
-    visionAngle: 70,       // 시야 각도(도)
-    visionRange: 220,      // 시야 거리
-    hearingRadius: 50,     // 소음 파동이 경비 몸에서 이 거리까지 닿으면 들음
-    hearingMul: 0.35,      // 들은 소음 크기 × 이 값만큼 의심 상승
+    radius: 32,            // 몸 크기(실행 중 변경 불가)
+    patrolSpeed: 80,       // 로밍 속도
+    suspectSpeed: 110,
+    chaseSpeed: 170,       // 추격 속도
+    searchSpeed: 75,
+    visionAngle: 80,       // 시야 각도(도) — 화면엔 표시하지 않음(눈이 향한 쪽)
+    visionRange: 240,      // 시야 거리
+    hearingRadius: 50,     // 소음 파동이 괴수 몸(+이 거리)에 닿으면 들음
+    hearingMul: 0.35,      // 깨어 있을 때: 들은 소음 크기 × 이 값만큼 의심 상승
     sightRate: 110,        // 시야 안 몬스터 1마리당 초당 의심 상승 (의심 상승률)
     carryingMul: 1.5,      // 알을 든 몬스터는 이만큼 더 빨리 의심
     suspectThreshold: 30,  // 이 이상이면 의심("?")
     decayRate: 12,         // 아무것도 안 보일 때 초당 의심 감소
     searchTime: 5,         // 수색 시간
     gloatTime: 1.5,        // 잡은 뒤 의기양양 정지 시간
+    // --- 잠 ---
+    sleepMin: 18,          // 한 번 자는 시간(최소)
+    sleepMax: 32,          // 한 번 자는 시간(최대)
+    roamMin: 20,           // 깨어나서 로밍하는 시간(최소) — 끝나면 잠자리로 돌아가 잔다
+    roamMax: 35,           // 깨어나서 로밍하는 시간(최대)
+    wakeThreshold: 50,     // 잠든 괴수의 "깸 게이지"가 이만큼 차면 깬다
+    sleepHearingMul: 0.3,  // 잘 때: 들은 소음 크기 × 이 값만큼 깸 게이지 상승
+    wakeDecay: 5,          // 깸 게이지 초당 감소(조용하면 다시 곯아떨어짐)
+    groggyTime: 1.0,       // 깨어나서 정신 차리는 시간
   },
 
   tension: {
@@ -115,9 +126,9 @@ export const DEFAULT_CONFIG = {
   },
 
   chaser: {
-    speed: 230,            // 추격자 속도
+    speed: 215,            // 추격자(우두머리 괴수) 속도
     duration: 60,          // 등장 후 퇴장까지
-    radius: 16,
+    radius: 40,
   },
 
   run: {
@@ -133,14 +144,8 @@ export const DEFAULT_CONFIG = {
     farDistance: 260,      // "멀어졌다"의 기준 거리
   },
 
-  vision: {
-    radius: 380,           // 플레이어 몬스터 시야 반경
-    fogAlpha: 0.72,        // 안개 어둡기
-  },
-
   debug: {
-    showCones: false,      // 경비 시야 원뿔 항상 표시(안개 속에서도)
-    noFog: false,          // 안개 끄기
+    showCones: false,      // 괴수 시야 원뿔 표시(평소엔 숨김)
     showSuspicion: false,  // 의심 게이지 숫자 표시
   },
 };

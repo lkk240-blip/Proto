@@ -22,7 +22,7 @@ export default class StartScene extends Phaser.Scene {
 
     // 목표 요약
     this.add.text(W / 2, 146,
-      `경비를 피해 알을 출구(초록 칸)로 옮겨 ${CONFIG.run.timeLimit / 60}분 안에 가치 ${CONFIG.run.quota} 이상 확보하세요.  알은 충격 3번이면 깨집니다.`,
+      `잠든 괴수들을 깨우지 말고 알을 숲 출구(초록 칸)로 옮겨 ${CONFIG.run.timeLimit / 60}분 안에 가치 ${CONFIG.run.quota} 이상 확보하세요.  알은 충격 3번이면 깨집니다.`,
       st(17, '#ffffff')).setOrigin(0.5);
 
     // 모드 선택
@@ -96,9 +96,10 @@ export default class StartScene extends Phaser.Scene {
     // 규칙 요약
     const tips = [
       '꿀떡이: 삼킨 알은 안전하지만 20초 지나면 "우웩!" 하고 뱉음 · 까부리: 뿔에 낀 알은 느려지지 않지만 대시·벽 충돌에 약함',
-      '큰 알(가치 3): 혼자 E = 질질 끌기(아주 느리고 시끄러움) · 둘이 붙어서 E = 공동 운반 · 경비 "?" = 의심, "!" = 추격 · 노란 파동 = 소음',
+      '큰 알(가치 3): 혼자 E = 질질 끌기(아주 느리고 시끄러움) · 둘이 붙어서 E = 공동 운반 · 노란 파동 = 소음',
+      '괴수: Zzz = 잠(소음이 쌓이면 깸, 보라 게이지) · ? = 의심 · ! = 추격 · 소란도 100이면 우두머리 괴수 등장',
     ];
-    tips.forEach((t, i) => c.add(this.add.text(x0 + 30, y0 + 262 + i * 30, t, { fontFamily: 'sans-serif', fontSize: '14px', color: '#9fb0c8' })));
+    tips.forEach((t, i) => c.add(this.add.text(x0 + 30, y0 + 256 + i * 25, t, { fontFamily: 'sans-serif', fontSize: '14px', color: '#9fb0c8' })));
   }
 
   go() {

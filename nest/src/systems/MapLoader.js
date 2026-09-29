@@ -5,15 +5,18 @@ export function parseMap(mapData, tileSize) {
   const height = rows.length;
   const width = Math.max(...rows.map((r) => r.length));
   const grid = []; // grid[y][x] = true 면 벽
+  const chars = []; // 원래 글자(그림 그릴 때 숲/바위 구분용)
   const points = { player: null, exits: [], nests: [], guards: [], waypoints: {} };
 
   const center = (x, y) => ({ x: x * tileSize + tileSize / 2, y: y * tileSize + tileSize / 2 });
 
   for (let y = 0; y < height; y++) {
     grid.push([]);
+    chars.push([]);
     for (let x = 0; x < width; x++) {
       const ch = rows[y][x] ?? '#'; // 짧은 줄은 벽으로 채움
-      grid[y].push(ch === '#');
+      grid[y].push(ch === '#' || ch === 'o');
+      chars[y].push(ch);
       if (ch === 'P') points.player = center(x, y);
       else if (ch === 'X') points.exits.push({ tx: x, ty: y, ...center(x, y) });
       else if (ch === 'N') points.nests.push(center(x, y));
@@ -34,6 +37,7 @@ export function parseMap(mapData, tileSize) {
     pixelWidth: width * tileSize,
     pixelHeight: height * tileSize,
     grid,
+    chars,
     points,
     wallRects: mergeWalls(grid, width, height, tileSize),
     exitRect: boundsOf(points.exits, tileSize),

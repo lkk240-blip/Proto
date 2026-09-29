@@ -3,7 +3,7 @@ import { CONFIG } from '../config.js';
 import { CAT, MASK } from '../systems/physics.js';
 import { hasClearPath } from '../systems/Los.js';
 
-// 추격자: 소란도 100 도달 시 1회 등장. 알을 가진 몬스터 위치를 항상 알고 쫓아온다. 일정 시간 후 퇴장.
+// 추격자(우두머리 괴수): 소란도 100 도달 시 1회 등장. 알을 가진 몬스터 위치를 항상 알고 쫓아온다. 일정 시간 후 퇴장.
 export default class Chaser {
   constructor(scene, x, y) {
     this.scene = scene;
@@ -21,21 +21,35 @@ export default class Chaser {
     this.visible = true;
     this.angle = 0;
 
+    // 우두머리 괴수: 경비 괴수보다 훨씬 크고 붉은 털
     this.view = scene.add.container(x, y).setDepth(13);
     const g = scene.add.graphics();
     const r = this.radius;
-    g.fillStyle(0xe8262b, 1);
-    g.lineStyle(3, 0x4d0000, 1);
-    g.fillRect(-r, -r, r * 2, r * 2);
-    g.strokeRect(-r, -r, r * 2, r * 2);
-    g.fillStyle(0xffff00, 1);
-    g.fillRect(r * 0.3, -r * 0.5, 5, 5);
-    g.fillRect(r * 0.3, r * 0.2, 5, 5);
+    g.fillStyle(0x000000, 0.3);
+    g.fillEllipse(0, r * 0.6, r * 2.4, r * 1.0);
+    g.fillStyle(0x5a1010, 1);
+    for (let i = 0; i < 9; i++) {
+      const a = Math.PI * 0.5 + (i / 8) * Math.PI;
+      g.fillCircle(Math.cos(a) * r * 0.9, Math.sin(a) * r * 0.9, r * 0.45);
+    }
+    g.fillStyle(0xa3201f, 1);
+    g.lineStyle(5, 0x2a0505, 1);
+    g.fillCircle(0, 0, r);
+    g.strokeCircle(0, 0, r);
+    g.fillStyle(0xc84a3a, 1);
+    g.fillEllipse(r * 0.4, 0, r * 0.9, r * 1.1);
+    g.fillStyle(0x1a1a1a, 1);
+    for (const sgn of [-1, 1]) g.fillTriangle(r * 0.1, sgn * r * 0.5, r * 0.5, sgn * r * 0.8, -r * 0.2, sgn * r * 1.55);
+    g.fillStyle(0xffffff, 1);
+    for (const sgn of [-1, 1]) g.fillTriangle(r * 0.85, sgn * r * 0.15, r * 0.95, sgn * r * 0.3, r * 1.15, sgn * r * 0.2); // 송곳니
+    g.fillStyle(0xfff36b, 1);
+    g.fillCircle(r * 0.6, -r * 0.32, r * 0.14);
+    g.fillCircle(r * 0.6, r * 0.32, r * 0.14);
     this.gfx = g;
     this.view.add(g);
-    // 안개 위에도 보이는 경고 표시
-    this.tag = scene.add.text(x, y - r - 18, '추격자', {
-      fontFamily: 'sans-serif', fontSize: '14px', fontStyle: 'bold', color: '#ff5d5d', stroke: '#000000', strokeThickness: 4,
+    // 다른 물체 위에도 보이는 경고 표시
+    this.tag = scene.add.text(x, y - r - 18, '우두머리', {
+      fontFamily: 'sans-serif', fontSize: '15px', fontStyle: 'bold', color: '#ff5d5d', stroke: '#000000', strokeThickness: 4,
     }).setOrigin(0.5).setDepth(56);
     this.view.setScale(0);
     scene.tweens.add({ targets: this.view, scale: 1, duration: 400, ease: 'Back.easeOut' });
@@ -92,15 +106,14 @@ export default class Chaser {
       if (Phaser.Math.Distance.Between(this.x, this.y, m.x, m.y) < this.radius + m.radius + 3) {
         if (m.stun(this.x, this.y)) {
           this.gloat = 1.5;
-          this.scene.fx.popText(this.x, this.y - 40, '크하하!', { color: '#ff8a8a', size: 22, depth: 56 });
+          this.scene.fx.popText(this.x, this.y - 50, '크아앙!', { color: '#ff8a8a', size: 22, depth: 56 });
         }
       }
     }
     this.view.setPosition(this.x, this.y);
-    this.view.setVisible(this.visible || CONFIG.debug.showCones);
     this.gfx.rotation = this.angle;
     this.tag.setPosition(this.x, this.y - this.radius - 18);
-    this.tag.setText(`추격자 ${Math.ceil(this.remaining)}`);
+    this.tag.setText(`우두머리 ${Math.ceil(this.remaining)}`);
   }
 
   leave() {

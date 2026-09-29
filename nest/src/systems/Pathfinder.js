@@ -67,9 +67,11 @@ export default class Pathfinder {
         if (dx && dy && (!this.passable(cx + dx, cy) || !this.passable(cx, cy + dy))) continue; // 모서리 대각 금지
         // 벽에 바로 붙은 칸은 약간 비싸게 → 복도 가운데로 다니게
         const nearWall = !this.passable(nx + 1, ny) || !this.passable(nx - 1, ny) || !this.passable(nx, ny + 1) || !this.passable(nx, ny - 1);
+        // 덩치 큰 괴수가 숲 가장자리에 걸리지 않도록 벽에서 2칸 떨어진 곳도 약간 비싸게
+        const nearWall2 = !nearWall && (!this.passable(nx + 2, ny) || !this.passable(nx - 2, ny) || !this.passable(nx, ny + 2) || !this.passable(nx, ny - 2));
         const nk = key(nx, ny);
         if (closed.has(nk)) continue;
-        const cost = (dx && dy ? 1.414 : 1) + (nearWall ? 0.6 : 0);
+        const cost = (dx && dy ? 1.414 : 1) + (nearWall ? 1.5 : 0) + (nearWall2 ? 0.4 : 0);
         const tentative = gScore.get(ck) + cost;
         if (tentative < (gScore.get(nk) ?? Infinity)) {
           came.set(nk, ck);

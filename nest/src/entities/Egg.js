@@ -35,9 +35,6 @@ export default class Egg {
     this.air = null;
     this.prevSpeed = 0;
     this.crackCd = 0;
-    this.seen = false;       // 한 번이라도 본 적 있는지(안개 기억용)
-    this.visible = true;     // 지금 플레이어 시야 안인지
-    this.lastSeen = { x, y };
     this.crackPaths = [0, 1, 2].map((i) => this.makeCrackPath(i));
 
     this.buildView();
@@ -240,8 +237,7 @@ export default class Egg {
       depth = 11;
     }
     const hidden = this.state === 'swallowed';
-    // 안개: 안 보이는 알은 숨김(기억 표시는 GameScene 이 따로 그림)
-    const show = !hidden && (this.visible || this.state === 'carried' || this.state === 'coop' || this.state === 'drag');
+    const show = !hidden;
     this.view.setVisible(show);
     this.shadow.setVisible(show);
     // 곧 깨질 알(금 2단계)은 부들부들 떨림

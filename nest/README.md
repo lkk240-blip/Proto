@@ -9,7 +9,7 @@ npm run build    # dist/ 에 정적 빌드 (itch.io 업로드용)
 ```
 
 - 밸런스 수치: `src/config.js`
-- 맵: `src/maps/facility01.js` (텍스트로 수정 가능)
+- 맵: `src/maps/forest01.js` (텍스트로 수정 가능)
 - 구현 중 가정/진행 기록: `NOTES.md`
 
 ## 배포(itch.io)
@@ -19,9 +19,9 @@ npm run build    # dist/ 에 정적 빌드 (itch.io 업로드용)
 ```
 src/
   config.js            모든 밸런스 수치 (튜닝 패널이 이 값을 바꿈)
-  maps/facility01.js   맵 텍스트 데이터 + 경비 순찰 경로
+  maps/forest01.js     맵 텍스트 데이터 + 괴수 로밍 경로
   scenes/              Start(시작) · Game(본 게임) · Hud(화면 UI) · Result(결과)
-  entities/            Monster(꿀떡이/까부리) · Egg(알) · Guard(경비) · Chaser(추격자)
-  systems/             EggSystem(알 규칙/공동 운반) · Companion(동료 AI) · Fog(안개) · Pathfinder · Noise · Input · Fx · Sfx · RunLog
+  entities/            Monster(꿀떡이/까부리) · Egg(알) · Guard(잠자는 대형 괴수) · Chaser(우두머리 괴수)
+  systems/             EggSystem(알 규칙/공동 운반) · Companion(동료 AI) · Pathfinder · Noise · Input · Fx · Sfx · RunLog
   ui/TuningPanel.js    ` 키 튜닝 패널
 ```

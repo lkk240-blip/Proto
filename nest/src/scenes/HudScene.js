@@ -77,9 +77,9 @@ export default class HudScene extends Phaser.Scene {
     const col = Phaser.Display.Color.Interpolate.ColorWithColor(
       Phaser.Display.Color.ValueToColor(0xffc16b), Phaser.Display.Color.ValueToColor(0xff2d2d), 100, t * 100);
     g.fillStyle(Phaser.Display.Color.GetColor(col.r, col.g, col.b), 1).fillRect(tx, ty, tw * t, 12);
-    if (gs.chaser && !gs.chaser.gone) this.tensionText.setText(`추격자 출현! 퇴장까지 ${Math.ceil(gs.chaser.remaining)}초`).setColor('#ff5d5d');
-    else if (gs.stats.chaser) this.tensionText.setText('추격자 퇴장함').setColor('#aaaaaa');
-    else this.tensionText.setText(`${gs.tension.toFixed(0)} / 100  (100이 되면 추격자 등장)`).setColor('#ffffff');
+    if (gs.chaser && !gs.chaser.gone) this.tensionText.setText(`우두머리 괴수 출현! 떠나기까지 ${Math.ceil(gs.chaser.remaining)}초`).setColor('#ff5d5d');
+    else if (gs.stats.chaser) this.tensionText.setText('우두머리 괴수가 떠났다').setColor('#aaaaaa');
+    else this.tensionText.setText(`${gs.tension.toFixed(0)} / 100  (100이 되면 우두머리 괴수 등장)`).setColor('#ffffff');
     this.tensionText.y = ty + 16;
 
     // --- 몬스터 상태 ---
@@ -135,11 +135,10 @@ export default class HudScene extends Phaser.Scene {
       for (const m of gs.monsters) targets.push({ x: m.x, y: m.y, color: 0x7cf0ff, label: m.tag });
     }
     for (const e of gs.eggs.list) {
-      if (!e.seen || e.state === 'carried' || e.state === 'swallowed' || e.state === 'coop' || e.state === 'drag') continue;
-      const p = e.visible ? e : e.lastSeen;
-      targets.push({ x: p.x, y: p.y, color: e.big ? 0x9fd0ff : 0xfff1a8, label: e.big ? '큰 알' : '알', small: true });
+      if (e.state === 'carried' || e.state === 'swallowed' || e.state === 'coop' || e.state === 'drag') continue;
+      targets.push({ x: e.x, y: e.y, color: e.big ? 0x9fd0ff : 0xfff1a8, label: e.big ? '큰 알' : '알', small: true });
     }
-    if (gs.chaser && !gs.chaser.gone) targets.push({ x: gs.chaser.x, y: gs.chaser.y, color: 0xff3030, label: '추격자' });
+    if (gs.chaser && !gs.chaser.gone) targets.push({ x: gs.chaser.x, y: gs.chaser.y, color: 0xff3030, label: '우두머리' });
 
     // 화살표가 놓일 테두리(위쪽 HUD, 아래쪽 힌트 줄은 피함)
     const box = { l: 26, r: W - 26, t: 118, b: H - 44 };
