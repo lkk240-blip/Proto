@@ -8,6 +8,8 @@ import EggSystem from '../systems/EggSystem.js';
 import Fx from '../systems/Fx.js';
 import Monster from '../entities/Monster.js';
 import { isWallAt } from '../systems/MapLoader.js';
+import Pathfinder from '../systems/Pathfinder.js';
+import Guard from '../entities/Guard.js';
 
 export default class GameScene extends Phaser.Scene {
   constructor() {
@@ -37,6 +39,12 @@ export default class GameScene extends Phaser.Scene {
 
     this.eggs = new EggSystem(this);
     this.eggs.spawn(this.map.points.nests);
+
+    this.pathfinder = new Pathfinder(this.map);
+    this.guards = this.spawnGuards();
+    this.noise.onNoise((n) => {
+      for (const g of this.guards) g.hear(n);
+    });
 
     const cam = this.cameras.main;
     cam.setBounds(0, 0, W, H);
@@ -104,6 +112,28 @@ export default class GameScene extends Phaser.Scene {
     }).setScrollFactor(0).setDepth(100);
   }
 
+  // 맵의 guardRoutes 로 경비 생성. G(시작점)는 첫 경로점이 가장 가까운 경로에 배정.
+  spawnGuards() {
+    const wp = this.map.points.waypoints;
+    const routes = (facility01.guardRoutes || []).map((r) => ({
+      points: r.points.map((d) => wp[String(d)]).filter(Boolean),
+      loop: !!r.loop,
+    })).filter((r) => r.points.length > 0);
+    const starts = [...this.map.points.guards];
+    return routes.map((route) => {
+      let start = route.points[0];
+      if (starts.length) {
+        let bi = 0, bd = Infinity;
+        starts.forEach((g, i) => {
+          const d = Math.hypot(g.x - route.points[0].x, g.y - route.points[0].y);
+          if (d < bd) { bd = d; bi = i; }
+        });
+        start = starts.splice(bi, 1)[0];
+      }
+      return new Guard(this, start.x, start.y, route);
+    });
+  }
+
   isWallAt(x, y) {
     return isWallAt(this.map, x, y);
   }
@@ -125,6 +155,7 @@ export default class GameScene extends Phaser.Scene {
     }
     for (const m of this.monsters) m.update(dt);
     this.eggs.update(dt);
+    for (const g of this.guards) g.update(dt);
     keys.endFrame();
 
     const p = this.player;
