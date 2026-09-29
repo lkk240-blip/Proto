@@ -1,5 +1,7 @@
 import Phaser from 'phaser';
 import { CONFIG } from '../config.js';
+import { CAT, MASK } from '../systems/physics.js';
+import { Sfx } from '../systems/Sfx.js';
 
 // 플레이어 몬스터. 물리 몸체(Matter 원)와 겉모습(도형 컨테이너)을 따로 두고 매 프레임 위치를 맞춘다.
 export default class Monster {
@@ -15,33 +17,63 @@ export default class Monster {
       frictionAir: 0,
       restitution: 0,
       inertia: Infinity, // 몸체가 굴러가며 회전하지 않도록
-      label: `monster:${typeKey}`,
+      label: 'monster',
+      collisionFilter: { category: CAT.MONSTER, mask: MASK.MONSTER, group: 0 },
     });
+    this.body.gameMonster = this;
 
     this.facing = new Phaser.Math.Vector2(1, 0);
-    this.controls = null;       // KeyboardControls 등 "의도"를 주는 객체
+    this.controls = null;       // PlayerControls 또는 동료 AI — "의도"를 주는 객체
+    this.controlled = false;    // 1인 모드에서 지금 플레이어가 조작 중인지
     this.dashCharges = CONFIG.monster.dashCharges;
-    this.dashRechargeTimer = 0; // 다음 충전까지 남은 시간
-    this.dashTimer = 0;         // 대시 남은 시간
+    this.dashRechargeTimer = 0;
+    this.dashTimer = 0;
     this.trailTimer = 0;
 
+    // 알 관련 상태
+    this.carrying = null;       // 들고 있는 작은 알
+    this.carryMode = typeKey === 'kkaburi' ? 'horn' : 'hands';
+    this.belly = null;          // 삼킨 작은 알(꿀떡이)
+    this.bellyTime = 0;
+    this.dragging = null;       // 질질 끄는 큰 알
+    this.coop = null;           // 공동 운반 덩어리
+
+    this.stunTimer = 0;
+    this.graceTimer = 0;
+    this.statusText = '';       // 머리 위 상태 표시(예: "대기")
+    this.tag = '';              // 이름 옆 표시(예: "P1")
+
     this.buildVisual();
+  }
+
+  get x() { return this.body.position.x; }
+  get y() { return this.body.position.y; }
+  get stunned() { return this.stunTimer > 0; }
+  get hasEgg() { return !!(this.carrying || this.belly || this.dragging || this.coop); }
+
+  canHold() {
+    return !this.stunned && !this.carrying && !this.dragging && !this.coop;
   }
 
   buildVisual() {
     const s = this.scene;
     const r = this.radius;
-    this.view = s.add.container(this.body.position.x, this.body.position.y).setDepth(10);
+    this.view = s.add.container(this.x, this.y).setDepth(10);
 
+    this.ring = s.add.ellipse(0, r * 0.7, r * 2.8, r * 1.2).setStrokeStyle(3, 0x7cf0ff, 0.9).setVisible(false);
     this.shadow = s.add.ellipse(0, r * 0.7, r * 2, r * 0.8, 0x000000, 0.35);
+    this.bodyC = s.add.container(0, 0); // 떨림/회전 연출용
     this.gfx = s.add.graphics();
+    this.bellyGfx = s.add.graphics();
+    this.bodyC.add([this.gfx, this.bellyGfx]);
     this.drawBody();
 
-    this.label = s.add.text(0, -r - 16, this.type.name, {
-      fontFamily: 'sans-serif', fontSize: '14px', color: '#ffffff', stroke: '#000000', strokeThickness: 3,
-    }).setOrigin(0.5);
+    const textStyle = { fontFamily: 'sans-serif', fontSize: '14px', color: '#ffffff', stroke: '#000000', strokeThickness: 3 };
+    this.label = s.add.text(0, -r - 16, this.type.name, textStyle).setOrigin(0.5);
+    this.status = s.add.text(0, -r - 34, '', { ...textStyle, fontSize: '15px', color: '#9fe8ff', fontStyle: 'bold' }).setOrigin(0.5);
+    this.stars = s.add.text(0, -r - 8, '★ ★ ★', { ...textStyle, fontSize: '16px', color: '#ffe14d' }).setOrigin(0.5).setVisible(false);
 
-    this.view.add([this.shadow, this.gfx, this.label]);
+    this.view.add([this.ring, this.shadow, this.bodyC, this.label, this.status, this.stars]);
   }
 
   drawBody() {
@@ -49,32 +81,57 @@ export default class Monster {
     const r = this.radius;
     const outline = this.typeKey === 'kkaburi' ? 0x555555 : 0x3b2412;
     g.clear();
+    if (this.typeKey === 'kkaburi') {
+      // 뿔: 진행 방향 쪽 삼각형 (회전은 몸 전체 회전으로 처리)
+      g.fillStyle(0xffd24d, 1);
+      g.lineStyle(2, 0x8a6a10, 1);
+      g.fillTriangle(r * 0.6, -r * 0.4, r * 0.6, r * 0.4, r * 1.6, 0);
+      g.strokeTriangle(r * 0.6, -r * 0.4, r * 0.6, r * 0.4, r * 1.6, 0);
+      // 뾰족한 몸 테두리 느낌
+      g.fillStyle(this.type.color, 1);
+      for (let i = 0; i < 6; i++) {
+        const a = Math.PI * 0.4 + i * (Math.PI * 1.2 / 5);
+        g.fillTriangle(Math.cos(a - 0.25) * r * 0.9, Math.sin(a - 0.25) * r * 0.9, Math.cos(a + 0.25) * r * 0.9, Math.sin(a + 0.25) * r * 0.9, Math.cos(a) * r * 1.3, Math.sin(a) * r * 1.3);
+      }
+    }
     g.fillStyle(this.type.color, 1);
     g.lineStyle(3, outline, 1);
     g.fillCircle(0, 0, r);
     g.strokeCircle(0, 0, r);
-    if (this.typeKey === 'kkaburi') {
-      // 뿔: 진행 방향 쪽 삼각형 (회전은 gfx 전체 회전으로 처리)
-      g.fillStyle(0xffd24d, 1);
-      g.fillTriangle(r * 0.6, -r * 0.35, r * 0.6, r * 0.35, r * 1.55, 0);
-    }
     // 눈 = 방향 표시
     g.fillStyle(0x000000, 1);
     g.fillCircle(r * 0.45, -r * 0.3, r * 0.14);
     g.fillCircle(r * 0.45, r * 0.3, r * 0.14);
   }
 
-  get x() { return this.body.position.x; }
-  get y() { return this.body.position.y; }
+  drawBelly() {
+    const g = this.bellyGfx;
+    g.clear();
+    if (!this.belly) return;
+    const r = this.radius;
+    // 불룩한 배 + 비치는 알 모양
+    g.fillStyle(0xb07a45, 1);
+    g.lineStyle(3, 0x3b2412, 1);
+    g.fillCircle(-r * 0.3, 0, r * 0.6);
+    g.strokeCircle(-r * 0.3, 0, r * 0.6);
+    g.lineStyle(2, 0xfff1d0, 0.8);
+    g.strokeEllipse(-r * 0.3, 0, r * 0.55, r * 0.75);
+  }
 
   speed() {
-    return CONFIG.monster.baseSpeed * this.type.speedMul;
+    let s = CONFIG.monster.baseSpeed * this.type.speedMul;
+    if (this.carrying && this.carryMode === 'hands') s *= 1 - CONFIG.egg.carrySmallSlow;
+    if (this.dragging) s *= 1 - CONFIG.bigEgg.dragSlow;
+    return s;
+  }
+
+  setVelocityPx(vx, vy) {
+    // Matter 속도 단위는 "픽셀/스텝(1/60초)" → 픽셀/초 값을 60으로 나눈다.
+    this.scene.matter.body.setVelocity(this.body, { x: vx / 60, y: vy / 60 });
   }
 
   update(dt) {
     const M = CONFIG.monster;
-    const move = this.controls ? this.controls.getMove() : { x: 0, y: 0 };
-    if (move.x || move.y) this.facing.set(move.x, move.y);
 
     // 대시 충전 (한 번에 1개씩)
     if (this.dashCharges < M.dashCharges) {
@@ -84,39 +141,57 @@ export default class Monster {
         this.dashRechargeTimer = this.dashCharges < M.dashCharges ? M.dashRecharge : 0;
       }
     }
+    this.graceTimer = Math.max(0, this.graceTimer - dt);
 
-    if (this.controls && this.controls.justPressed('dash')) this.tryDash();
-
-    // Matter 속도 단위는 "픽셀/스텝(1/60초)" → 픽셀/초 값을 60으로 나눈다.
     const v = this.body.velocity;
-    let tx, ty, k;
-    if (this.dashTimer > 0) {
-      this.dashTimer -= dt;
-      tx = this.facing.x * M.dashSpeed;
-      ty = this.facing.y * M.dashSpeed;
-      k = 1;
-      this.trailTimer -= dt;
-      if (this.trailTimer <= 0) { this.spawnAfterimage(); this.trailTimer = 0.025; }
+    if (this.stunned) {
+      this.stunTimer -= dt;
+      if (this.stunTimer <= 0) {
+        this.stunTimer = 0;
+        this.graceTimer = M.graceTime;
+        this.bodyC.rotation = 0;
+      }
+      // 튕겨 나간 속도가 점점 줄어듦
+      const damp = Math.pow(0.9, dt * 60);
+      this.scene.matter.body.setVelocity(this.body, { x: v.x * damp, y: v.y * damp });
+    } else if (this.coop) {
+      // 공동 운반 중에는 덩어리(Coop)가 속도를 정한다. 얼굴은 알 쪽으로.
+      const e = this.coop.egg;
+      this.facing.set(e.x - this.x, e.y - this.y).normalize();
     } else {
-      tx = move.x * this.speed();
-      ty = move.y * this.speed();
-      k = M.accel;
-    }
-    const nx = Phaser.Math.Linear(v.x, tx / 60, k);
-    const ny = Phaser.Math.Linear(v.y, ty / 60, k);
-    this.scene.matter.body.setVelocity(this.body, { x: nx, y: ny });
+      const move = this.controls ? this.controls.getMove() : { x: 0, y: 0 };
+      if (move.x || move.y) this.facing.set(move.x, move.y).normalize();
+      if (this.controls && this.controls.justPressed('dash')) this.tryDash();
 
-    this.syncView(dt);
+      let tx, ty, k;
+      if (this.dashTimer > 0) {
+        this.dashTimer -= dt;
+        tx = this.facing.x * M.dashSpeed;
+        ty = this.facing.y * M.dashSpeed;
+        k = 1;
+        this.trailTimer -= dt;
+        if (this.trailTimer <= 0) { this.spawnAfterimage(); this.trailTimer = 0.025; }
+      } else {
+        tx = move.x * this.speed();
+        ty = move.y * this.speed();
+        k = 1 - Math.pow(1 - M.accel, dt * 60);
+      }
+      this.setVelocityPx(Phaser.Math.Linear(v.x * 60, tx, k), Phaser.Math.Linear(v.y * 60, ty, k));
+    }
+
+    this.syncView();
   }
 
   tryDash() {
-    if (this.dashCharges <= 0 || this.dashTimer > 0) return false;
+    if (this.dashCharges <= 0 || this.dashTimer > 0 || this.dragging) return false;
     if (this.dashCharges === CONFIG.monster.dashCharges) this.dashRechargeTimer = CONFIG.monster.dashRecharge;
     this.dashCharges--;
     this.dashTimer = CONFIG.monster.dashDuration;
     this.scene.noise.emit(this.x, this.y, CONFIG.monster.dashNoise, 'dash');
+    Sfx.dash();
     // 찌그러졌다 펴지는 연출
     this.scene.tweens.add({ targets: this.gfx, scaleX: 1.35, scaleY: 0.7, duration: 60, yoyo: true });
+    this.scene.eggs.onDash(this);
     return true;
   }
 
@@ -125,9 +200,57 @@ export default class Monster {
     this.scene.tweens.add({ targets: ghost, alpha: 0, scale: 0.6, duration: 220, onComplete: () => ghost.destroy() });
   }
 
+  // 경비·추격자에게 잡힘: 크게 튕겨 나가며 빙글 돌고 기절, 들고 있던 알을 떨어뜨린다.
+  stun(fromX, fromY) {
+    if (this.stunned || this.graceTimer > 0) return false;
+    const M = CONFIG.monster;
+    this.scene.eggs.dropAllOnHit(this);
+    this.stunTimer = M.stunTime;
+    this.dashTimer = 0;
+    const dir = new Phaser.Math.Vector2(this.x - fromX, this.y - fromY);
+    if (dir.lengthSq() < 1) dir.set(Math.random() - 0.5, Math.random() - 0.5);
+    dir.normalize();
+    this.setVelocityPx(dir.x * M.knockbackSpeed, dir.y * M.knockbackSpeed);
+    this.scene.tweens.add({ targets: this.bodyC, rotation: Math.PI * 6, duration: 900, ease: 'Cubic.easeOut' });
+    this.scene.fx.popText(this.x, this.y - this.radius - 20, '으악!', { color: '#ff8a8a', size: 26 });
+    this.scene.fx.shake(250, 0.012);
+    this.scene.fx.burst(this.x, this.y, 0xffffff, 8, 140, 5);
+    this.scene.stats.caught++;
+    Sfx.caught();
+    return true;
+  }
+
   syncView() {
+    const r = this.radius;
     this.view.setPosition(this.x, this.y);
-    const target = Math.atan2(this.facing.y, this.facing.x);
-    this.gfx.rotation = Phaser.Math.Angle.RotateTo(this.gfx.rotation, target, 0.35);
+    if (!this.stunned) {
+      const target = Math.atan2(this.facing.y, this.facing.x);
+      this.gfx.rotation = Phaser.Math.Angle.RotateTo(this.gfx.rotation, target, 0.35);
+      this.bellyGfx.rotation = this.gfx.rotation;
+    }
+    // 삼킨 알 경고 떨림
+    const warn = this.belly && this.bellyTime >= CONFIG.kkuldduk.swallowWarn;
+    this.bodyC.x = warn ? Phaser.Math.FloatBetween(-3, 3) : 0;
+    this.bodyC.y = warn ? Phaser.Math.FloatBetween(-2, 2) : 0;
+    const bellyScale = this.belly ? 1.18 : 1;
+    this.bodyC.setScale(bellyScale);
+
+    this.stars.setVisible(this.stunned);
+    if (this.stunned) this.stars.rotation = Math.sin(this.scene.time.now * 0.01) * 0.3;
+    this.view.alpha = this.graceTimer > 0 ? (Math.floor(this.scene.time.now / 80) % 2 ? 0.4 : 1) : 1;
+
+    this.ring.setVisible(this.controlled);
+    this.label.setText(this.tag ? `${this.tag} ${this.type.name}` : this.type.name);
+    let st = this.statusText;
+    if (this.belly) {
+      const left = Math.max(0, CONFIG.kkuldduk.swallowLimit - this.bellyTime);
+      st = warn ? `우웩 직전! ${left.toFixed(0)}` : `꿀꺽 ${left.toFixed(0)}`;
+      this.status.setColor(warn ? '#ff6b6b' : '#ffd79a');
+    } else {
+      this.status.setColor('#9fe8ff');
+    }
+    this.status.setText(st);
+    this.label.y = -r * bellyScale - 16;
+    this.status.y = -r * bellyScale - 34 - (this.carrying && this.carryMode === 'hands' ? 22 : 0);
   }
 }

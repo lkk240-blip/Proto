@@ -2,9 +2,12 @@ import Phaser from 'phaser';
 import { CONFIG } from '../config.js';
 import facility01 from '../maps/facility01.js';
 import { parseMap } from '../systems/MapLoader.js';
-import { KeyboardControls } from '../systems/Controls.js';
+import { keys, PlayerControls } from '../systems/Input.js';
 import NoiseSystem from '../systems/NoiseSystem.js';
+import EggSystem from '../systems/EggSystem.js';
+import Fx from '../systems/Fx.js';
 import Monster from '../entities/Monster.js';
+import { isWallAt } from '../systems/MapLoader.js';
 
 export default class GameScene extends Phaser.Scene {
   constructor() {
@@ -16,15 +19,24 @@ export default class GameScene extends Phaser.Scene {
     const { pixelWidth: W, pixelHeight: H } = this.map;
 
     this.matter.world.setBounds(0, 0, W, H);
+    this.mode = 'solo';
     this.noise = new NoiseSystem(this);
+    this.fx = new Fx(this);
+    this.stats = newStats();
+    this.secured = 0;
+    this.tension = 0;
 
     this.drawMap();
     this.buildWalls();
 
     const p = this.map.points.player;
     this.player = new Monster(this, p.x, p.y, 'kkuldduk');
-    this.player.controls = new KeyboardControls(this, 'p1');
+    this.player.controls = new PlayerControls('solo', 0);
+    this.player.controlled = true;
     this.monsters = [this.player];
+
+    this.eggs = new EggSystem(this);
+    this.eggs.spawn(this.map.points.nests);
 
     const cam = this.cameras.main;
     cam.setBounds(0, 0, W, H);
@@ -87,18 +99,44 @@ export default class GameScene extends Phaser.Scene {
   buildHud() {
     const style = { fontFamily: 'sans-serif', fontSize: '16px', color: '#ffffff', stroke: '#000000', strokeThickness: 4 };
     this.hudText = this.add.text(16, 12, '', style).setScrollFactor(0).setDepth(100);
-    this.add.text(16, CONFIG.world.viewHeight - 32, 'WASD 이동   Shift 대시   (M1 빌드: 이동/대시/벽 충돌/카메라만 동작)', {
+    this.add.text(16, CONFIG.world.viewHeight - 32, 'WASD 이동   Shift 대시   E 줍기/내려놓기   Space 던지기   R 삼키기/뱉기', {
       ...style, fontSize: '14px', color: '#cccccc',
     }).setScrollFactor(0).setDepth(100);
   }
 
+  isWallAt(x, y) {
+    return isWallAt(this.map, x, y);
+  }
+
+  addTension(amount) {
+    this.tension = Math.min(100, this.tension + amount);
+  }
+
+  onDeposit(egg, value) {
+    this.secured += value;
+    this.stats.deposited++;
+  }
+
   update(time, deltaMs) {
     const dt = Math.min(deltaMs, 50) / 1000; // 프레임이 크게 튀어도 한 번에 0.05초까지만
+    for (const m of this.monsters) {
+      m.controls?.update?.();
+      this.eggs.handleActions(m);
+    }
     for (const m of this.monsters) m.update(dt);
+    this.eggs.update(dt);
+    keys.endFrame();
 
     const p = this.player;
     const pips = '●'.repeat(p.dashCharges) + '○'.repeat(CONFIG.monster.dashCharges - p.dashCharges);
     const recharge = p.dashCharges < CONFIG.monster.dashCharges ? `  (충전 ${p.dashRechargeTimer.toFixed(1)}초)` : '';
-    this.hudText.setText(`${p.type.name}   대시 ${pips}${recharge}`);
+    this.hudText.setText(`${p.type.name}   대시 ${pips}${recharge}\n확보 가치 ${this.secured.toFixed(2)} / 할당량 ${CONFIG.run.quota}   소란도 ${this.tension.toFixed(0)}`);
   }
+}
+
+function newStats() {
+  return {
+    deposited: 0, cracks: 0, broken: 0, caught: 0, chaser: false, swaps: 0,
+    coopTime: 0, dragTime: 0, swallowTime: 0, playTime: 0, throws: 0, catches: 0,
+  };
 }
