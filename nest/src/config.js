@@ -29,6 +29,12 @@ export const DEFAULT_CONFIG = {
     stunTime: 3,           // 경비에게 잡혔을 때 기절 시간
     knockbackSpeed: 750,   // 잡혔을 때 튕겨 나가는 속도
     graceTime: 1.5,        // 기절에서 깬 뒤 다시 잡히지 않는 시간
+    maxHp: 3,              // 체력(칸)
+    guardDamage: 1,        // 괴수에게 잡히면 깎이는 체력
+    bossDamage: 2,         // 우두머리 괴수에게 잡히면 깎이는 체력
+    reviveTime: 2.5,       // 쓰러진 동료 옆에서 E를 누르고 있어야 하는 시간
+    reviveRange: 70,       // 부활시킬 수 있는 거리(몸 가장자리 사이)
+    reviveHp: 1,           // 부활했을 때 체력
   },
 
   // 몬스터 종류별 특성. speedMul 은 baseSpeed 에 곱하는 배율.
@@ -149,7 +155,12 @@ export const DEFAULT_CONFIG = {
   },
 
   chaser: {
-    speed: 215,            // 추격자(우두머리 괴수) 속도
+    speed: 215,            // 추격자(우두머리 괴수) 돌진 속도(발견 후)
+    stalkSpeed: 110,       // 발견 전: 알 냄새를 따라 슬금슬금 다가오는 속도
+    sightRange: 320,       // 발견 게이지가 오르는 거리(벽에 가리면 안 오름)
+    awareRate: 30,         // 보이는 몬스터 1마리당 초당 발견 게이지 상승(가까울수록 최대 2배)
+    awareDecay: 10,        // 아무도 안 보이면 초당 감소
+    lurkRange: 380,        // 수풀 속에서 알 가진 몬스터가 이 거리 안이면 멈춰서 매복
     duration: 60,          // 등장 후 퇴장까지
     radius: 40,
   },

@@ -40,6 +40,9 @@ export default class Monster {
 
     this.stunTimer = 0;
     this.graceTimer = 0;
+    this.hp = CONFIG.monster.maxHp;
+    this.downed = false;        // 체력 0: 쓰러짐(동료가 부활시켜야 함)
+    this.reviveProgress = 0;    // 0~1, 동료가 부활시키는 중
     this.statusText = '';       // 머리 위 상태 표시(예: "대기")
     this.tag = '';              // 이름 옆 표시(예: "P1")
 
@@ -48,7 +51,8 @@ export default class Monster {
 
   get x() { return this.body.position.x; }
   get y() { return this.body.position.y; }
-  get stunned() { return this.stunTimer > 0; }
+  // 쓰러진 것도 "행동 불가"로 취급(잡히지 않음, 조작·줍기 불가)
+  get stunned() { return this.stunTimer > 0 || this.downed; }
   get hasEgg() { return !!(this.carrying || this.belly || this.dragging || this.coop); }
 
   canHold() {
@@ -73,7 +77,8 @@ export default class Monster {
     this.status = s.add.text(0, -r - 34, '', { ...textStyle, fontSize: '15px', color: '#9fe8ff', fontStyle: 'bold' }).setOrigin(0.5);
     this.stars = s.add.text(0, -r - 8, '★ ★ ★', { ...textStyle, fontSize: '16px', color: '#ffe14d' }).setOrigin(0.5).setVisible(false);
 
-    this.view.add([this.ring, this.shadow, this.bodyC, this.label, this.status, this.stars]);
+    this.hpG = s.add.graphics();
+    this.view.add([this.ring, this.shadow, this.bodyC, this.label, this.status, this.stars, this.hpG]);
   }
 
   drawBody() {
@@ -118,6 +123,24 @@ export default class Monster {
     g.strokeEllipse(-r * 0.3, 0, r * 0.55, r * 0.75);
   }
 
+  // 머리 위 체력 칸 + 부활 진행 링
+  drawHp() {
+    const g = this.hpG;
+    g.clear();
+    const n = CONFIG.monster.maxHp, w = 9, gap = 3;
+    const x0 = -(n * w + (n - 1) * gap) / 2, y = this.radius + 8;
+    for (let i = 0; i < n; i++) {
+      g.fillStyle(0x000000, 0.6).fillRect(x0 + i * (w + gap) - 1, y - 1, w + 2, 7);
+      g.fillStyle(i < this.hp ? 0xff5d6c : 0x3a3a3a, 1).fillRect(x0 + i * (w + gap), y, w, 5);
+    }
+    if (this.downed && this.reviveProgress > 0) {
+      g.lineStyle(4, 0x8cf5a8, 1);
+      g.beginPath();
+      g.arc(0, 0, this.radius + 10, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * this.reviveProgress);
+      g.strokePath();
+    }
+  }
+
   speed() {
     let s = CONFIG.monster.baseSpeed * this.type.speedMul;
     if (this.carrying && this.carryMode === 'hands') s *= 1 - CONFIG.egg.carrySmallSlow;
@@ -141,7 +164,10 @@ export default class Monster {
     this.graceTimer = Math.max(0, this.graceTimer - dt);
 
     const v = this.body.velocity;
-    if (this.stunned) {
+    if (this.downed) {
+      const damp = Math.pow(0.88, dt * 60);
+      this.scene.matter.body.setVelocity(this.body, { x: v.x * damp, y: v.y * damp });
+    } else if (this.stunned) {
       this.stunTimer -= dt;
       if (this.stunTimer <= 0) {
         this.stunTimer = 0;
@@ -197,23 +223,47 @@ export default class Monster {
   }
 
   // 경비·추격자에게 잡힘: 크게 튕겨 나가며 빙글 돌고 기절, 들고 있던 알을 떨어뜨린다.
-  stun(fromX, fromY) {
+  stun(fromX, fromY, damage = CONFIG.monster.guardDamage) {
     if (this.stunned || this.graceTimer > 0) return false;
     const M = CONFIG.monster;
     this.scene.eggs.dropAllOnHit(this);
-    this.stunTimer = M.stunTime;
+    this.hp = Math.max(0, this.hp - damage);
+    if (this.hp <= 0) {
+      this.downed = true;
+      this.stunTimer = 0;
+    } else {
+      this.stunTimer = M.stunTime;
+    }
     this.dashTimer = 0;
     const dir = new Phaser.Math.Vector2(this.x - fromX, this.y - fromY);
     if (dir.lengthSq() < 1) dir.set(Math.random() - 0.5, Math.random() - 0.5);
     dir.normalize();
     this.setVelocityPx(dir.x * M.knockbackSpeed, dir.y * M.knockbackSpeed);
     this.scene.tweens.add({ targets: this.bodyC, rotation: Math.PI * 6, duration: 900, ease: 'Cubic.easeOut' });
-    this.scene.fx.popText(this.x, this.y - this.radius - 20, '으악!', { color: '#ff8a8a', size: 26 });
+    this.scene.fx.popText(this.x, this.y - this.radius - 20, this.downed ? '꽥... (쓰러짐)' : `으악! -${damage}`, { color: '#ff8a8a', size: 26 });
     this.scene.fx.shake(250, 0.012);
     this.scene.fx.burst(this.x, this.y, 0xffffff, 8, 140, 5);
     this.scene.stats.caught++;
+    if (this.downed) {
+      this.scene.stats.downs++;
+      this.scene.tweens.add({ targets: this.bodyC, scaleY: 0.55, duration: 400, delay: 700 });
+      this.scene.onMonsterDowned(this);
+    }
     Sfx.caught();
     return true;
+  }
+
+  revive() {
+    this.downed = false;
+    this.hp = CONFIG.monster.reviveHp;
+    this.reviveProgress = 0;
+    this.graceTimer = CONFIG.monster.graceTime;
+    this.bodyC.rotation = 0;
+    this.scene.tweens.killTweensOf(this.bodyC);
+    this.bodyC.setScale(1);
+    this.scene.fx.popText(this.x, this.y - this.radius - 24, '부활!', { color: '#8cf5a8', size: 28 });
+    this.scene.fx.ring(this.x, this.y, 0x8cf5a8, 60, 400);
+    Sfx.deposit();
   }
 
   syncView() {
@@ -234,7 +284,7 @@ export default class Monster {
     const bob = !this.stunned && spd > 30 ? Math.sin(this.scene.time.now * 0.025) * 0.07 : 0;
     this.bodyC.setScale(bellyScale * (1 - bob * 0.5), bellyScale * (1 + bob));
 
-    this.stars.setVisible(this.stunned);
+    this.stars.setVisible(this.stunTimer > 0 && !this.downed);
     if (this.stunned) this.stars.rotation = Math.sin(this.scene.time.now * 0.01) * 0.3;
     const hideAlpha = this.inBush ? CONFIG.bush.monsterAlpha : 1;
     this.view.alpha = (this.graceTimer > 0 ? (Math.floor(this.scene.time.now / 80) % 2 ? 0.4 : 1) : 1) * hideAlpha;
@@ -250,7 +300,12 @@ export default class Monster {
     } else {
       this.status.setColor('#9fe8ff');
     }
+    if (this.downed) {
+      st = this.reviveProgress > 0 ? `부활 중 ${Math.round(this.reviveProgress * 100)}%` : '쓰러짐 — 동료가 E로 부활';
+      this.status.setColor('#ff8a8a');
+    }
     this.status.setText(st);
+    this.drawHp();
     const carryUp = this.carrying && this.carryMode === 'hands' ? 22 : 0;
     this.label.y = -r * bellyScale - 16 - carryUp;
     this.status.y = -r * bellyScale - 34 - carryUp;

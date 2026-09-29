@@ -57,7 +57,8 @@ export default class EggSystem {
   handleActions(m) {
     const c = m.controls;
     if (!c || m.stunned) return;
-    if (c.justPressed('grab')) this.grab(m);
+    // 쓰러진 동료 옆이면 E는 부활 전용(줍기 안 함)
+    if (c.justPressed('grab') && !m.reviveTarget) this.grab(m);
     if (c.justPressed('throw')) this.throwEgg(m);
     if (c.justPressed('swallow')) this.swallowOrSpit(m);
   }

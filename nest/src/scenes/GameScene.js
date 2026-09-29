@@ -100,9 +100,13 @@ export default class GameScene extends Phaser.Scene {
     other.controls = this.companion;
   }
 
-  // Tab: 조작 몬스터 교체
+  // Tab: 조작 몬스터 교체 (쓰러진 쪽으로는 못 바꿈)
   swap() {
     const next = this.monsters.find((o) => o !== this.player);
+    if (next.downed) {
+      this.fx.popText(this.player.x, this.player.y - 50, '동료가 쓰러져 있어요!', { color: '#ff8a8a', size: 16 });
+      return;
+    }
     this.companion.onSwap(next);
     this.setControlled(next);
     this.stats.swaps++;
@@ -354,6 +358,44 @@ export default class GameScene extends Phaser.Scene {
     Sfx.siren();
   }
 
+  // 몬스터가 쓰러짐: 둘 다면 실패, 조작 중인 쪽이면 동료로 조작을 넘김
+  onMonsterDowned(m) {
+    if (this.monsters.every((o) => o.downed)) {
+      this.time.delayedCall(900, () => this.endRun('전멸'));
+      return;
+    }
+    if (this.mode === 'solo' && m === this.player) {
+      this.time.delayedCall(700, () => {
+        if (!this.ended && this.player.downed) {
+          this.swap();
+          this.hud?.showBanner('동료로 전환! 옆에서 E를 눌러 부활', '#ffd166');
+        }
+      });
+    }
+  }
+
+  // 쓰러진 동료 옆에서 E를 누르고 있으면 부활
+  updateRevive(dt) {
+    const M = CONFIG.monster;
+    for (const m of this.monsters) {
+      m.reviveTarget = null;
+      if (m.stunned || !m.controls || (this.mode === 'solo' && !m.controlled)) continue;
+      const ally = this.monsters.find((o) => o !== m && o.downed &&
+        Phaser.Math.Distance.Between(o.x, o.y, m.x, m.y) <= o.radius + m.radius + M.reviveRange);
+      if (!ally) continue;
+      m.reviveTarget = ally;
+      if (m.controls.isHeld('grab')) {
+        ally.reviveProgress = Math.min(1, ally.reviveProgress + dt / M.reviveTime);
+        if (ally.reviveProgress >= 1) ally.revive();
+      } else {
+        ally.reviveProgress = 0;
+      }
+    }
+    for (const o of this.monsters) {
+      if (o.downed && !this.monsters.some((m) => m.reviveTarget === o)) o.reviveProgress = 0;
+    }
+  }
+
   timeLeft() {
     return CONFIG.run.timeLimit - this.elapsed;
   }
@@ -385,7 +427,8 @@ export default class GameScene extends Phaser.Scene {
 
   // 조기 탈출: 두 마리 모두 출구 존 안 + E 길게
   updateExit(dt) {
-    this.bothInExit = this.monsters.every((m) => this.eggs.inExit(m.x, m.y));
+    // 쓰러진 몬스터는 두고 갈 수 있음(살아 있는 몬스터 모두가 출구에 있으면 됨)
+    this.bothInExit = this.monsters.filter((m) => !m.downed).every((m) => this.eggs.inExit(m.x, m.y));
     const holding = this.bothInExit && this.monsters.some((m) => m.controls?.isHeld?.('grab'));
     this.exitHold = holding ? this.exitHold + dt : 0;
     if (this.exitHold >= CONFIG.run.exitHoldTime) this.endRun('조기 탈출');
@@ -420,10 +463,9 @@ export default class GameScene extends Phaser.Scene {
       this.companion.think(dt, c, this.player);
     }
 
-    for (const m of this.monsters) {
-      m.controls?.update?.();
-      this.eggs.handleActions(m);
-    }
+    for (const m of this.monsters) m.controls?.update?.();
+    this.updateRevive(dt);
+    for (const m of this.monsters) this.eggs.handleActions(m);
     for (const m of this.monsters) m.update(dt);
     this.eggs.update(dt);
     this.updateBushes(dt);
@@ -459,7 +501,7 @@ export default class GameScene extends Phaser.Scene {
 
 function newStats() {
   return {
-    deposited: 0, cracks: 0, broken: 0, caught: 0, chaser: false, swaps: 0,
+    deposited: 0, cracks: 0, broken: 0, caught: 0, downs: 0, chaser: false, swaps: 0,
     coopTime: 0, dragTime: 0, swallowTime: 0, playTime: 0, throws: 0, catches: 0,
   };
 }

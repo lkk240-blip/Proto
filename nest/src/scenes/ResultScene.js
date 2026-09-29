@@ -28,6 +28,7 @@ export default class ResultScene extends Phaser.Scene {
       ['금 간 횟수', s.cracks],
       ['깨뜨린 알 수', s.broken],
       ['괴수에게 잡힌 횟수', s.caught],
+      ['쓰러진 횟수', s.downs],
       ['우두머리(추격자) 등장', s.chaser ? '예' : '아니오'],
       ['교체 횟수', s.swaps],
       ['공동 운반 시간', `${s.coopTime.toFixed(1)}초`],

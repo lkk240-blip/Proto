@@ -22,7 +22,7 @@ export default class StartScene extends Phaser.Scene {
 
     // 목표 요약
     this.add.text(W / 2, 146,
-      `잠든 괴수들을 깨우지 말고 알을 숲 출구(초록 칸)로 옮겨 ${CONFIG.run.timeLimit / 60}분 안에 가치 ${CONFIG.run.quota} 이상 확보하세요.  알은 충격 3번이면 깨집니다.`,
+      `체력 ${CONFIG.monster.maxHp}칸, 둘 다 쓰러지면 실패.  잠든 괴수들을 깨우지 말고 알을 숲 출구(초록 칸)로 옮겨 ${CONFIG.run.timeLimit / 60}분 안에 가치 ${CONFIG.run.quota} 이상 확보하세요.  알은 충격 3번이면 깨집니다.`,
       st(17, '#ffffff')).setOrigin(0.5);
 
     // 모드 선택
@@ -81,15 +81,15 @@ export default class StartScene extends Phaser.Scene {
 
     if (this.mode === 'solo') {
       head(x0 + 30, y0 + 18, '조작 (혼자서 몬스터 2마리를 번갈아 조작)');
-      const L = [['WASD', '이동'], ['Shift', `대시 (쿨타임 ${CONFIG.monster.dashCooldown}초, 소음!)`], ['E', '알·돌멩이 줍기 / 내려놓기'], ['Space', '작은 알·돌멩이 던지기'], ['Space → 괴수', `명중하면 ${CONFIG.stone.enemyStunTime}초 기절`]];
+      const L = [['WASD', '이동'], ['Space', `대시 (쿨타임 ${CONFIG.monster.dashCooldown}초, 소음!)`], ['E', '알·돌멩이 줍기 / 내려놓기'], ['R', `작은 알·돌멩이 던지기 (괴수 명중 시 ${CONFIG.stone.enemyStunTime}초 기절)`], ['E 누르고 있기', '쓰러진 동료 옆에서 부활']];
       const R = [['Tab', '조작 몬스터 교체'], ['Q', '동료에게 따라와 ↔ 기다려'], ['E (큰 알)', '동료가 옆에 있으면 공동 운반'], ['Esc', '일시정지'], ['`', '튜닝 패널']];
       L.forEach(([k, d], i) => key(x0 + 30, y0 + 56 + i * 40, k, d));
       R.forEach(([k, d], i) => key(x0 + 540, y0 + 56 + i * 40, k, d));
     } else {
       head(x0 + 30, y0 + 18, 'P1 (꿀떡이)');
       head(x0 + 540, y0 + 18, 'P2 (까부리)');
-      const P1 = [['WASD', '이동'], ['왼쪽 Shift', '대시'], ['E', '줍기 / 내려놓기'], ['Space', '던지기']];
-      const P2 = [['방향키', '이동'], ['오른쪽 Ctrl', '대시'], ['Enter', '줍기 / 내려놓기'], ['오른쪽 Shift', '던지기']];
+      const P1 = [['WASD', '이동'], ['Space', '대시'], ['E', '줍기 / 내려놓기 / 부활'], ['R', '던지기']];
+      const P2 = [['방향키', '이동'], ['오른쪽 Ctrl', '대시'], ['Enter', '줍기 / 내려놓기 / 부활'], ['오른쪽 Shift', '던지기']];
       P1.forEach(([k, d], i) => key(x0 + 30, y0 + 56 + i * 40, k, d));
       P2.forEach(([k, d], i) => key(x0 + 540, y0 + 56 + i * 40, k, d));
     }

@@ -52,11 +52,11 @@ export const KEYMAPS = {
   // 1인 모드: Shift 는 좌우 아무거나
   solo: {
     up: ['KeyW'], down: ['KeyS'], left: ['KeyA'], right: ['KeyD'],
-    dash: ['ShiftLeft', 'ShiftRight'], grab: ['KeyE'], throw: ['Space'], swallow: ['KeyR'],
+    dash: ['Space'], grab: ['KeyE'], throw: ['KeyR'], swallow: ['KeyF'], // 삼키기는 고유 스킬(현재 꺼짐)
   },
   p1: {
     up: ['KeyW'], down: ['KeyS'], left: ['KeyA'], right: ['KeyD'],
-    dash: ['ShiftLeft'], grab: ['KeyE'], throw: ['Space'], swallow: ['KeyR'],
+    dash: ['Space'], grab: ['KeyE'], throw: ['KeyR'], swallow: ['KeyF'],
   },
   p2: {
     up: ['ArrowUp'], down: ['ArrowDown'], left: ['ArrowLeft'], right: ['ArrowRight'],

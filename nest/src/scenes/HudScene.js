@@ -86,21 +86,23 @@ export default class HudScene extends Phaser.Scene {
     const lines = gs.monsters.map((m) => {
       const dash = m.dashCooldown > 0 ? `대시 ${m.dashCooldown.toFixed(1)}s` : '대시 준비';
       let st = '';
-      if (m.stunned) st = '기절!';
+      if (m.downed) st = '쓰러짐';
+      else if (m.stunned) st = '기절!';
       else if (m.coop) st = '공동 운반';
       else if (m.dragging) st = '질질 끌기';
       else if (m.carrying) st = m.carrying.isStone ? '돌멩이' : m.carryMode === 'horn' ? '뿔에 알' : '알 들고';
       if (m.belly) st += (st ? ' + ' : '') + `삼킴 ${Math.ceil(CONFIG.kkuldduk.swallowLimit - m.bellyTime)}s`;
       const who = gs.mode === 'duo' ? `${m.tag} ` : (m.controlled ? '▶ ' : '   ');
-      return `${who}${m.type.name}  ${dash}${st ? '  [' + st + ']' : ''}`;
+      const hp = '♥'.repeat(m.hp) + '♡'.repeat(Math.max(0, CONFIG.monster.maxHp - m.hp));
+      return `${who}${m.type.name}  ${hp}  ${dash}${st ? '  [' + st + ']' : ''}`;
     });
     if (gs.mode === 'solo') lines.push(`동료: ${gs.companion.mode === 'wait' ? '기다려' : '따라와'}`);
     this.monsterText.setText(lines.join('\n'));
 
     // --- 조작 힌트 ---
     this.hint.setText(gs.mode === 'duo'
-      ? 'P1: WASD 이동 · 왼Shift 대시 · E 줍기 · Space 던지기      P2: 방향키 · 오른Ctrl 대시 · Enter 줍기 · 오른Shift 던지기      Esc 일시정지'
-      : 'WASD 이동 · Shift 대시 · E 줍기/내려놓기 · Space 던지기(괴수에 맞히면 기절) · Tab 교체 · Q 따라와/기다려 · Esc 일시정지 · ` 튜닝');
+      ? 'P1: WASD 이동 · Space 대시 · E 줍기/부활 · R 던지기      P2: 방향키 · 오른Ctrl 대시 · Enter 줍기/부활 · 오른Shift 던지기      Esc 일시정지'
+      : 'WASD 이동 · Space 대시 · E 줍기/내려놓기(쓰러진 동료 옆: 누르고 있으면 부활) · R 던지기 · Tab 교체 · Q 따라와/기다려 · Esc 일시정지 · ` 튜닝');
 
     // --- 조기 탈출 ---
     if (gs.exitHold > 0) {
