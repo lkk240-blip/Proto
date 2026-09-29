@@ -250,7 +250,8 @@ export default class Monster {
       this.status.setColor('#9fe8ff');
     }
     this.status.setText(st);
-    this.label.y = -r * bellyScale - 16;
-    this.status.y = -r * bellyScale - 34 - (this.carrying && this.carryMode === 'hands' ? 22 : 0);
+    const carryUp = this.carrying && this.carryMode === 'hands' ? 22 : 0;
+    this.label.y = -r * bellyScale - 16 - carryUp;
+    this.status.y = -r * bellyScale - 34 - carryUp;
   }
 }

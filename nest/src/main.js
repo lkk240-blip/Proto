@@ -1,6 +1,8 @@
 import Phaser from 'phaser';
 import { CONFIG } from './config.js';
 import GameScene from './scenes/GameScene.js';
+import HudScene from './scenes/HudScene.js';
+import ResultScene from './scenes/ResultScene.js';
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,
@@ -20,7 +22,7 @@ const game = new Phaser.Game({
       debug: false,
     },
   },
-  scene: [GameScene],
+  scene: [GameScene, HudScene, ResultScene],
 });
 
 // 브라우저 콘솔에서 확인용

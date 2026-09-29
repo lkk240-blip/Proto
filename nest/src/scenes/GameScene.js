@@ -13,6 +13,8 @@ import { isFreeSpot } from '../systems/Los.js';
 import { Sfx } from '../systems/Sfx.js';
 import Monster from '../entities/Monster.js';
 import Guard from '../entities/Guard.js';
+import Chaser from '../entities/Chaser.js';
+import { incrementRunCount } from '../systems/RunLog.js';
 
 export default class GameScene extends Phaser.Scene {
   constructor() {
@@ -36,6 +38,10 @@ export default class GameScene extends Phaser.Scene {
     this.tension = 0;
     this.chaser = null;
     this.paused = false;
+    this.elapsed = 0;
+    this.ended = false;
+    this.exitHold = 0;
+    this.bothInExit = false;
 
     this.drawMap();
     this.buildWalls();
@@ -55,7 +61,9 @@ export default class GameScene extends Phaser.Scene {
     cam.setBounds(0, 0, W, H);
     if (this.mode === 'solo') cam.startFollow(this.player.view, true, CONFIG.camera.followLerp, CONFIG.camera.followLerp);
 
-    this.buildHud();
+    this.scene.launch('Hud');
+    this.hud = this.scene.get('Hud');
+    this.events.once('shutdown', () => this.scene.stop('Hud'));
   }
 
   // ---------- 생성 ----------
@@ -183,18 +191,68 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  buildHud() {
-    const style = { fontFamily: 'sans-serif', fontSize: '16px', color: '#ffffff', stroke: '#000000', strokeThickness: 4 };
-    this.hudText = this.add.text(16, 12, '', style).setScrollFactor(0).setDepth(100);
-  }
-
   // ---------- 게임 규칙 훅 ----------
   isWallAt(x, y) {
     return isWallAt(this.map, x, y);
   }
 
   addTension(amount) {
+    if (this.ended || this.stats.chaser) return; // 추격자는 한 판에 1회뿐 — 이후 소란도는 더 오르지 않음
     this.tension = Math.min(100, this.tension + amount);
+    if (this.tension >= 100) this.spawnChaser();
+  }
+
+  // 소란도 100: 맵 반대편(플레이어에게서 가장 먼 지점)에서 추격자 등장
+  spawnChaser() {
+    this.stats.chaser = true;
+    const pts = [...this.map.points.nests, ...Object.values(this.map.points.waypoints), ...this.map.points.guards];
+    let best = pts[0], bd = -1;
+    for (const q of pts) {
+      const d = Math.min(...this.monsters.map((m) => Math.hypot(q.x - m.x, q.y - m.y)));
+      if (d > bd) { bd = d; best = q; }
+    }
+    this.chaser = new Chaser(this, best.x, best.y);
+    this.fx.shake(500, 0.015);
+    this.hud?.showBanner('추격자 등장!', '#ff4d4d');
+    this.hud?.redFlash();
+    Sfx.siren();
+  }
+
+  timeLeft() {
+    return CONFIG.run.timeLimit - this.elapsed;
+  }
+
+  togglePause() {
+    this.paused = !this.paused;
+    if (this.paused) { this.matter.world.pause(); this.tweens.pauseAll(); }
+    else { this.matter.world.resume(); this.tweens.resumeAll(); }
+    this.hud?.setPaused(this.paused);
+  }
+
+  endRun(reason) {
+    if (this.ended) return;
+    this.ended = true;
+    const runNumber = incrementRunCount();
+    const result = {
+      mode: this.mode,
+      reason,
+      success: this.secured >= CONFIG.run.quota,
+      secured: this.secured,
+      quota: CONFIG.run.quota,
+      stats: { ...this.stats },
+      runNumber,
+    };
+    this.hud?.showBanner(result.success ? '성공!' : '종료!', result.success ? '#5dff9a' : '#ffd166');
+    this.matter.world.pause();
+    this.time.delayedCall(1300, () => this.scene.start('Result', result));
+  }
+
+  // 조기 탈출: 두 마리 모두 출구 존 안 + E 길게
+  updateExit(dt) {
+    this.bothInExit = this.monsters.every((m) => this.eggs.inExit(m.x, m.y));
+    const holding = this.bothInExit && this.monsters.some((m) => m.controls?.isHeld?.('grab'));
+    this.exitHold = holding ? this.exitHold + dt : 0;
+    if (this.exitHold >= CONFIG.run.exitHoldTime) this.endRun('조기 탈출');
   }
 
   onDeposit(egg, value) {
@@ -205,6 +263,14 @@ export default class GameScene extends Phaser.Scene {
   // ---------- 프레임 ----------
   update(time, deltaMs) {
     const dt = Math.min(deltaMs, 50) / 1000; // 프레임이 크게 튀어도 한 번에 0.05초까지만
+    if (this.ended) { keys.endFrame(); return; }
+
+    if (keys.wasPressed('Escape')) this.togglePause();
+    if (this.paused) {
+      if (keys.wasPressed('KeyM')) this.scene.start(this.scene.get('Start') ? 'Start' : 'Game');
+      keys.endFrame();
+      return;
+    }
 
     if (this.mode === 'solo') {
       if (keys.wasPressed('Tab')) this.swap();
@@ -212,7 +278,6 @@ export default class GameScene extends Phaser.Scene {
         const mode = this.companion.toggleMode();
         const c = this.monsters.find((o) => o !== this.player);
         this.fx.popText(c.x, c.y - c.radius - 30, mode === 'wait' ? '기다려!' : '따라와!', { color: '#9fe8ff', size: 20 });
-        this.fx.popText(this.player.x, this.player.y - this.player.radius - 30, mode === 'wait' ? '거기 있어!' : '이리 와!', { color: '#ffffff', size: 16 });
       }
       this.companion.record(this.player);
       const c = this.monsters.find((o) => o !== this.player);
@@ -226,14 +291,33 @@ export default class GameScene extends Phaser.Scene {
     for (const m of this.monsters) m.update(dt);
     this.eggs.update(dt);
     for (const g of this.guards) g.update(dt);
+    if (this.chaser) {
+      this.chaser.update(dt);
+      if (this.chaser.gone) this.chaser = null;
+    }
+    if (this.mode === 'duo') this.updateDuoCamera();
     this.fog.update();
-    this.stats.playTime += dt;
 
-    const p = this.player;
-    const pips = '●'.repeat(p.dashCharges) + '○'.repeat(CONFIG.monster.dashCharges - p.dashCharges);
-    this.hudText.setText(`${p.type.name}   대시 ${pips}\n확보 가치 ${this.secured.toFixed(2)} / 할당량 ${CONFIG.run.quota}   소란도 ${this.tension.toFixed(0)}` +
-      (this.mode === 'solo' ? `\n동료: ${this.companion.mode === 'wait' ? '기다려' : '따라와'}  (Tab 교체 / Q 전환)` : ''));
+    this.elapsed += dt;
+    this.stats.playTime += dt;
+    this.updateExit(dt);
+    if (this.timeLeft() <= 0) this.endRun('시간 종료');
     keys.endFrame();
+  }
+
+  // 2인 모드 카메라: 두 몬스터를 모두 담도록 중심·줌 조정
+  updateDuoCamera() {
+    const C = CONFIG.camera;
+    const cam = this.cameras.main;
+    const [a, b] = this.monsters;
+    const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
+    const needW = Math.abs(a.x - b.x) + C.duoPadding * 2;
+    const needH = Math.abs(a.y - b.y) + C.duoPadding * 2;
+    const zoom = Phaser.Math.Clamp(Math.min(cam.width / needW, cam.height / needH), C.duoMinZoom, C.duoMaxZoom);
+    cam.setZoom(Phaser.Math.Linear(cam.zoom, zoom, 0.08));
+    const tx = Phaser.Math.Linear(cam.midPoint.x, cx, C.followLerp);
+    const ty = Phaser.Math.Linear(cam.midPoint.y, cy, C.followLerp);
+    cam.centerOn(tx, ty);
   }
 }
 
