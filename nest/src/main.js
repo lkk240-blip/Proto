@@ -6,6 +6,7 @@ const game = new Phaser.Game({
   type: Phaser.AUTO,
   parent: 'game',
   backgroundColor: '#111111',
+  fps: { panicMax: 10 }, // 시작 직후 느린 프레임을 억지로 16ms로 자르는 구간을 짧게
   width: CONFIG.world.viewWidth,
   height: CONFIG.world.viewHeight,
   scale: {

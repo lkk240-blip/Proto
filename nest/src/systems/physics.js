@@ -8,7 +8,7 @@ export const CAT = {
 
 export const MASK = {
   WALL: 0xffff,
-  MONSTER: CAT.WALL | CAT.MONSTER | CAT.EGG,
+  MONSTER: CAT.WALL | CAT.EGG, // 몬스터끼리는 겹칠 수 있음(동료가 길을 막지 않게)
   EGG: CAT.WALL | CAT.MONSTER | CAT.EGG,
   GUARD: CAT.WALL, // 경비는 벽에만 막히고, 몬스터와의 접촉은 거리로 판정(잡기)
   NONE: 0,

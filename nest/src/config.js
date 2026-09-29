@@ -135,7 +135,7 @@ export const DEFAULT_CONFIG = {
 
   vision: {
     radius: 380,           // 플레이어 몬스터 시야 반경
-    fogAlpha: 0.82,        // 안개 어둡기
+    fogAlpha: 0.72,        // 안개 어둡기
   },
 
   debug: {
