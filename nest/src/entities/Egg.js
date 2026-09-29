@@ -277,7 +277,7 @@ export default class Egg {
       } else {
         x = h.x; y = h.y; z = h.radius + 14; scale = 0.85;
       }
-      depth = 11;
+      depth = h.inBush ? 16 : 11;
     }
     const hidden = this.state === 'swallowed';
     const show = !hidden;

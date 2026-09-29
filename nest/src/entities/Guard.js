@@ -267,7 +267,9 @@ export default class Guard {
       for (const m of this.scene.monsters) {
         if (m.stunned) continue;
         if (this.canSee(m.x, m.y)) {
-          gain += G.sightRate * (m.hasEgg ? G.carryingMul : 1);
+          // 수풀에 숨은 몬스터는 코앞이 아니면 아주 천천히 알아챔
+          const hidden = m.inBush && Phaser.Math.Distance.Between(this.x, this.y, m.x, m.y) > this.radius + CONFIG.bush.closeRange;
+          gain += G.sightRate * (m.hasEgg ? G.carryingMul : 1) * (hidden ? CONFIG.bush.sightMul : 1);
           if (!seen || m.hasEgg) seen = m;
         }
       }
@@ -482,6 +484,10 @@ export default class Guard {
     this.view.setPosition(this.x, this.y);
     this.iconLayer.setPosition(this.x, this.y);
     this.bodyC.rotation = this.facingAngle;
+    // 수풀 속에 숨어 있으면 몸·아이콘 모두 안 보임. 가까이 가서 보이면 잎 위로 올려 그림.
+    this.view.setVisible(!this.hidden);
+    this.iconLayer.setVisible(!this.hidden);
+    this.view.setDepth(this.inBush ? 15 : 12);
     this.drawCone();
 
     // 아이콘: 잠 "Zzz", 깨는 중 "!?", 의심/수색 "?", 추격 "!", 잡은 뒤 "♪"

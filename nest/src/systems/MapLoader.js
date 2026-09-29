@@ -6,6 +6,7 @@ export function parseMap(mapData, tileSize) {
   const width = Math.max(...rows.map((r) => r.length));
   const grid = []; // grid[y][x] = true 면 벽
   const chars = []; // 원래 글자(그림 그릴 때 숲/바위 구분용)
+  const bush = []; // bush[y][x] = true 면 수풀
   const points = { player: null, exits: [], nests: [], guards: [], waypoints: {}, stones: [] };
 
   const center = (x, y) => ({ x: x * tileSize + tileSize / 2, y: y * tileSize + tileSize / 2 });
@@ -13,10 +14,12 @@ export function parseMap(mapData, tileSize) {
   for (let y = 0; y < height; y++) {
     grid.push([]);
     chars.push([]);
+    bush.push([]);
     for (let x = 0; x < width; x++) {
       const ch = rows[y][x] ?? '#'; // 짧은 줄은 벽으로 채움
       grid[y].push(ch === '#' || ch === 'o');
       chars[y].push(ch);
+      bush[y].push(ch === 'b');
       if (ch === 'P') points.player = center(x, y);
       else if (ch === 'X') points.exits.push({ tx: x, ty: y, ...center(x, y) });
       else if (ch === 'N') points.nests.push(center(x, y));
@@ -39,6 +42,7 @@ export function parseMap(mapData, tileSize) {
     pixelHeight: height * tileSize,
     grid,
     chars,
+    bush,
     points,
     wallRects: mergeWalls(grid, width, height, tileSize),
     exitRect: boundsOf(points.exits, tileSize),
@@ -88,4 +92,11 @@ function boundsOf(tiles, ts) {
   const x0 = Math.min(...xs), y0 = Math.min(...ys);
   const x1 = Math.max(...xs), y1 = Math.max(...ys);
   return { x: x0 * ts, y: y0 * ts, w: (x1 - x0 + 1) * ts, h: (y1 - y0 + 1) * ts };
+}
+
+export function isBushAt(map, px, py) {
+  const tx = Math.floor(px / map.tileSize);
+  const ty = Math.floor(py / map.tileSize);
+  if (ty < 0 || ty >= map.height || tx < 0 || tx >= map.width) return false;
+  return map.bush[ty][tx];
 }

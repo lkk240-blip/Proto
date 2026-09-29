@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { CONFIG } from '../config.js';
 import forest01 from '../maps/forest01.js';
-import { parseMap, isWallAt } from '../systems/MapLoader.js';
+import { parseMap, isWallAt, isBushAt } from '../systems/MapLoader.js';
 import { keys, PlayerControls } from '../systems/Input.js';
 import NoiseSystem from '../systems/NoiseSystem.js';
 import EggSystem from '../systems/EggSystem.js';
@@ -43,6 +43,7 @@ export default class GameScene extends Phaser.Scene {
     this.bothInExit = false;
 
     this.drawMap();
+    this.drawBushes();
     this.buildWalls();
     this.pathfinder = new Pathfinder(this.map);
 
@@ -254,6 +255,70 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
+  // 수풀: 몬스터·괴수보다 위에 그려서 안에 들어가면 잎에 가려지게
+  drawBushes() {
+    const { bush, width, height, tileSize: ts, pixelWidth: W, pixelHeight: H } = this.map;
+    const g = this.make.graphics({ x: 0, y: 0 }, false);
+    const rnd = (x, y, k = 0) => {
+      const n = Math.sin(x * 91.3 + y * 47.9 + k * 13.1) * 24634.6345;
+      return n - Math.floor(n);
+    };
+    const tiles = [];
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) if (bush[y][x]) tiles.push([x, y]);
+    // 테두리(어두운 잎) → 몸통 → 밝은 잎 순서로 겹쳐 그림
+    for (const [pass, color, scale] of [[0, 0x1d4a22, 0.95], [1, 0x2f7336, 0.8], [2, 0x4a9a4c, 0.38]]) {
+      for (const [x, y] of tiles) {
+        for (let k = 0; k < 2; k++) {
+          const cx = x * ts + ts / 2 + (rnd(x, y, k + pass * 3) - 0.5) * 14 - (pass === 2 ? 5 : 0);
+          const cy = y * ts + ts / 2 + (rnd(x, y, k + 7 + pass * 3) - 0.5) * 14 - (pass === 2 ? 6 : 0);
+          g.fillStyle(color, 1);
+          g.fillCircle(cx, cy, ts * scale * (0.8 + rnd(x, y, k + 20) * 0.3));
+        }
+      }
+    }
+    this.bushLayer = this.add.renderTexture(0, 0, W, H).setOrigin(0, 0).setDepth(14).setAlpha(0.93);
+    this.bushLayer.draw(g);
+    g.destroy();
+  }
+
+  inBush(x, y) {
+    return isBushAt(this.map, x, y);
+  }
+
+  // 수풀 속 괴수는 내 몬스터가 가까이 가야 보임. 수풀 속에서 움직이는 건 잎이 흔들려서 힌트만 줌.
+  updateBushes(dt) {
+    const B = CONFIG.bush;
+    const enemies = [...this.guards, ...(this.chaser && !this.chaser.gone ? [this.chaser] : [])];
+    for (const en of enemies) {
+      en.inBush = this.inBush(en.x, en.y);
+      const near = this.monsters.some((m) => Math.hypot(m.x - en.x, m.y - en.y) <= B.revealRange + en.radius);
+      en.hidden = en.inBush && !near && !CONFIG.debug.showCones;
+    }
+    for (const m of this.monsters) m.inBush = this.inBush(m.x, m.y);
+    for (const o of [...enemies, ...this.monsters]) {
+      if (!o.inBush) continue;
+      const v = o.body.velocity;
+      if (Math.hypot(v.x, v.y) * 60 < 30) continue;
+      o.rustle = (o.rustle || 0) - dt;
+      if (o.rustle <= 0) {
+        o.rustle = 0.22;
+        this.leafBurst(o.x, o.y);
+      }
+    }
+  }
+
+  leafBurst(x, y) {
+    for (let i = 0; i < 3; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const leaf = this.add.ellipse(x + Math.cos(a) * 10, y + Math.sin(a) * 10, 7, 4, Math.random() > 0.5 ? 0x6fbf5a : 0x3f8f3c).setDepth(16);
+      leaf.rotation = a;
+      this.tweens.add({
+        targets: leaf, x: leaf.x + Math.cos(a) * 26, y: leaf.y + Math.sin(a) * 26 - 10, rotation: a + 3, alpha: 0,
+        duration: 450, ease: 'Quad.easeOut', onComplete: () => leaf.destroy(),
+      });
+    }
+  }
+
   buildWalls() {
     for (const r of this.map.wallRects) {
       this.matter.add.rectangle(r.x + r.w / 2, r.y + r.h / 2, r.w, r.h, {
@@ -361,6 +426,7 @@ export default class GameScene extends Phaser.Scene {
     }
     for (const m of this.monsters) m.update(dt);
     this.eggs.update(dt);
+    this.updateBushes(dt);
     for (const g of this.guards) g.update(dt);
     if (this.chaser) {
       this.chaser.update(dt);

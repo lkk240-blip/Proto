@@ -236,10 +236,12 @@ export default class Monster {
 
     this.stars.setVisible(this.stunned);
     if (this.stunned) this.stars.rotation = Math.sin(this.scene.time.now * 0.01) * 0.3;
-    this.view.alpha = this.graceTimer > 0 ? (Math.floor(this.scene.time.now / 80) % 2 ? 0.4 : 1) : 1;
+    const hideAlpha = this.inBush ? CONFIG.bush.monsterAlpha : 1;
+    this.view.alpha = (this.graceTimer > 0 ? (Math.floor(this.scene.time.now / 80) % 2 ? 0.4 : 1) : 1) * hideAlpha;
+    this.view.setDepth(this.inBush ? 15 : 10); // 숨어 있어도 내 몬스터는 잎 위에 반투명으로
+    this.label.setText((this.tag ? `${this.tag} ` : '') + this.type.name + (this.inBush ? ' (숨음)' : ''));
 
     this.ring.setVisible(this.controlled);
-    this.label.setText(this.tag ? `${this.tag} ${this.type.name}` : this.type.name);
     let st = this.statusText;
     if (this.belly) {
       const left = Math.max(0, CONFIG.kkuldduk.swallowLimit - this.bellyTime);

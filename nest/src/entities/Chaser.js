@@ -113,6 +113,9 @@ export default class Chaser {
       }
     }
     this.view.setPosition(this.x, this.y);
+    this.view.setVisible(!this.hidden);
+    this.tag.setVisible(!this.hidden);
+    this.view.setDepth(this.inBush ? 15 : 13);
     this.gfx.rotation = this.angle;
     this.tag.setPosition(this.x, this.y - this.radius - 18);
     this.tag.setText(this.stunTimer > 0 ? '★ 기절 ★' : `우두머리 ${Math.ceil(this.remaining)}`);
