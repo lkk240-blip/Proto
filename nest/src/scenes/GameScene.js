@@ -1,0 +1,104 @@
+import Phaser from 'phaser';
+import { CONFIG } from '../config.js';
+import facility01 from '../maps/facility01.js';
+import { parseMap } from '../systems/MapLoader.js';
+import { KeyboardControls } from '../systems/Controls.js';
+import NoiseSystem from '../systems/NoiseSystem.js';
+import Monster from '../entities/Monster.js';
+
+export default class GameScene extends Phaser.Scene {
+  constructor() {
+    super('Game');
+  }
+
+  create() {
+    this.map = parseMap(facility01, CONFIG.world.tileSize);
+    const { pixelWidth: W, pixelHeight: H } = this.map;
+
+    this.matter.world.setBounds(0, 0, W, H);
+    this.noise = new NoiseSystem(this);
+
+    this.drawMap();
+    this.buildWalls();
+
+    const p = this.map.points.player;
+    this.player = new Monster(this, p.x, p.y, 'kkuldduk');
+    this.player.controls = new KeyboardControls(this, 'p1');
+    this.monsters = [this.player];
+
+    const cam = this.cameras.main;
+    cam.setBounds(0, 0, W, H);
+    cam.startFollow(this.player.view, true, CONFIG.camera.followLerp, CONFIG.camera.followLerp);
+
+    this.buildHud();
+  }
+
+  drawMap() {
+    const { grid, width, height, tileSize: ts } = this.map;
+    const g = this.add.graphics().setDepth(0);
+
+    // 바닥
+    g.fillStyle(0x2a2d34, 1);
+    g.fillRect(0, 0, this.map.pixelWidth, this.map.pixelHeight);
+    g.lineStyle(1, 0x33373f, 1);
+    for (let x = 0; x <= width; x++) g.lineBetween(x * ts, 0, x * ts, height * ts);
+    for (let y = 0; y <= height; y++) g.lineBetween(0, y * ts, width * ts, y * ts);
+
+    // 출구
+    const ex = this.map.exitRect;
+    if (ex) {
+      g.fillStyle(0x2ecc71, 0.35);
+      g.fillRect(ex.x, ex.y, ex.w, ex.h);
+      g.lineStyle(3, 0x2ecc71, 1);
+      g.strokeRect(ex.x, ex.y, ex.w, ex.h);
+      this.add.text(ex.x + ex.w / 2, ex.y - 12, '출구', {
+        fontFamily: 'sans-serif', fontSize: '16px', color: '#2ecc71', fontStyle: 'bold',
+      }).setOrigin(0.5).setDepth(1);
+    }
+
+    // 알 둥지 후보 (M2에서 알이 놓일 자리)
+    g.lineStyle(2, 0xc9a26b, 0.6);
+    for (const n of this.map.points.nests) g.strokeCircle(n.x, n.y, ts * 1.2);
+
+    // 벽
+    const w = this.add.graphics().setDepth(2);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if (!grid[y][x]) continue;
+        w.fillStyle(0x565d6b, 1);
+        w.fillRect(x * ts, y * ts, ts, ts);
+        // 바닥과 맞닿은 벽 아래쪽에 그림자 선을 줘서 입체감
+        if (y + 1 < height && !grid[y + 1][x]) {
+          w.fillStyle(0x3a3f4a, 1);
+          w.fillRect(x * ts, y * ts + ts - 6, ts, 6);
+        }
+      }
+    }
+  }
+
+  buildWalls() {
+    for (const r of this.map.wallRects) {
+      this.matter.add.rectangle(r.x + r.w / 2, r.y + r.h / 2, r.w, r.h, {
+        isStatic: true, friction: 0, frictionStatic: 0, restitution: 0, label: 'wall',
+      });
+    }
+  }
+
+  buildHud() {
+    const style = { fontFamily: 'sans-serif', fontSize: '16px', color: '#ffffff', stroke: '#000000', strokeThickness: 4 };
+    this.hudText = this.add.text(16, 12, '', style).setScrollFactor(0).setDepth(100);
+    this.add.text(16, CONFIG.world.viewHeight - 32, 'WASD 이동   Shift 대시   (M1 빌드: 이동/대시/벽 충돌/카메라만 동작)', {
+      ...style, fontSize: '14px', color: '#cccccc',
+    }).setScrollFactor(0).setDepth(100);
+  }
+
+  update(time, deltaMs) {
+    const dt = Math.min(deltaMs, 50) / 1000; // 프레임이 크게 튀어도 한 번에 0.05초까지만
+    for (const m of this.monsters) m.update(dt);
+
+    const p = this.player;
+    const pips = '●'.repeat(p.dashCharges) + '○'.repeat(CONFIG.monster.dashCharges - p.dashCharges);
+    const recharge = p.dashCharges < CONFIG.monster.dashCharges ? `  (충전 ${p.dashRechargeTimer.toFixed(1)}초)` : '';
+    this.hudText.setText(`${p.type.name}   대시 ${pips}${recharge}`);
+  }
+}
