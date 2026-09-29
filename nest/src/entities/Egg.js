@@ -3,7 +3,7 @@ import { CONFIG } from '../config.js';
 import { CAT, MASK } from '../systems/physics.js';
 import { Sfx } from '../systems/Sfx.js';
 
-// 알. 상태(state):
+// 알(그리고 같은 방식으로 들고 던지는 돌멩이 kind='stone'). 상태(state):
 //   ground   바닥에 놓여 물리적으로 굴러다님
 //   carried  작은 알을 한 마리가 들고 있음(손/뿔)
 //   swallowed 꿀떡이 배 속
@@ -15,10 +15,11 @@ export default class Egg {
     this.scene = scene;
     this.kind = kind;
     this.big = kind === 'big';
-    this.radius = this.big ? 22 : 11;
+    this.isStone = kind === 'stone';
+    this.radius = this.big ? 22 : this.isStone ? CONFIG.stone.radius : 11;
     this.body = scene.matter.add.circle(x, y, this.radius, {
-      density: this.big ? 0.03 : 0.002,
-      frictionAir: this.big ? 0.25 : 0.06,
+      density: this.big ? 0.03 : this.isStone ? 0.004 : 0.002,
+      frictionAir: this.big ? 0.25 : this.isStone ? 0.12 : 0.06,
       friction: 0.05,
       restitution: 0.35,
       label: 'egg',
@@ -42,7 +43,7 @@ export default class Egg {
 
   get x() { return this.body.position.x; }
   get y() { return this.body.position.y; }
-  get baseValue() { return this.big ? CONFIG.egg.bigValue : CONFIG.egg.smallValue; }
+  get baseValue() { return this.isStone ? 0 : this.big ? CONFIG.egg.bigValue : CONFIG.egg.smallValue; }
   get value() {
     if (this.broken) return 0;
     return Math.max(0, this.baseValue * (1 - this.cracks * CONFIG.egg.crackValueLoss));
@@ -80,6 +81,17 @@ export default class Egg {
 
   redraw() {
     const g = this.gfx;
+    if (this.isStone) {
+      const r = this.radius;
+      g.clear();
+      g.fillStyle(0x8a8f96, 1);
+      g.lineStyle(2, 0x3a3d42, 1);
+      g.fillEllipse(0, 0, r * 2.2, r * 1.8);
+      g.strokeEllipse(0, 0, r * 2.2, r * 1.8);
+      g.fillStyle(0xb5bac1, 1);
+      g.fillEllipse(-r * 0.35, -r * 0.3, r * 0.9, r * 0.6);
+      return;
+    }
     const rx = this.radius * 0.8, ry = this.radius * 1.05;
     const base = this.big ? 0xcfe6ff : 0xfff1d0;
     const tint = [base, this.big ? 0xbcd6f0 : 0xf0dfb8, this.big ? 0xa9c3dd : 0xe0c898][Math.min(this.cracks, 2)];
@@ -126,7 +138,7 @@ export default class Egg {
 
   // 충격 → 금 1단계. reason 은 기록용.
   crack(reason = '') {
-    if (this.broken || this.deposited || this.state === 'swallowed') return false;
+    if (this.isStone || this.broken || this.deposited || this.state === 'swallowed') return false;
     if (this.crackCd > 0) return false;
     this.crackCd = CONFIG.egg.crackCooldown;
     this.cracks++;
@@ -197,6 +209,9 @@ export default class Egg {
     a.vz -= E.throwGravity * dt;
     this.z += a.vz * dt;
 
+    // 괴수에 명중 → 기절
+    if (this.z < CONFIG.stone.hitHeight && this.checkEnemyHit(a)) return;
+
     // 다른 몬스터가 받기
     if (this.z < E.catchMaxHeight) {
       for (const m of this.scene.monsters) {
@@ -220,6 +235,34 @@ export default class Egg {
       else Sfx.bump();
       this.scene.noise.emit(this.x, this.y, CONFIG.noise.bump, 'land');
     }
+  }
+
+  checkEnemyHit(a) {
+    const enemies = [...this.scene.guards, ...(this.scene.chaser && !this.scene.chaser.gone ? [this.scene.chaser] : [])];
+    for (const en of enemies) {
+      if (a.hit && a.hit.includes(en)) continue;
+      if (Phaser.Math.Distance.Between(en.x, en.y, this.x, this.y) > en.radius + this.radius) continue;
+      a.hit = [...(a.hit || []), en];
+      const from = a.thrower ? { x: a.thrower.x, y: a.thrower.y } : { x: this.x - a.vx, y: this.y - a.vy };
+      en.hitByThrow(from);
+      this.scene.stats.enemyHits = (this.scene.stats.enemyHits || 0) + 1;
+      this.scene.fx.popText(en.x, en.y - en.radius - 34, '퍽!', { color: '#ffffff', size: 30, depth: 56 });
+      this.scene.fx.ring(this.x, this.y, 0xffffff, 50, 250);
+      this.scene.fx.shake(140, 0.008);
+      this.scene.noise.emit(this.x, this.y, CONFIG.stone.hitNoise, 'hit');
+      Sfx.bump();
+      // 맞고 튕겨 나와 떨어짐
+      a.vx *= -0.3;
+      a.vy *= -0.3;
+      a.vz = Math.min(a.vz, 60);
+      if (!this.isStone && CONFIG.egg.crackOnEnemyHit) {
+        this.crackCd = 0;
+        this.crack('enemy-hit');
+        if (this.broken) return true;
+      }
+      return false;
+    }
+    return false;
   }
 
   syncView() {

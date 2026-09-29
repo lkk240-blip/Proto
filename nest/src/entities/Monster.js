@@ -25,14 +25,14 @@ export default class Monster {
     this.facing = new Phaser.Math.Vector2(1, 0);
     this.controls = null;       // PlayerControls 또는 동료 AI — "의도"를 주는 객체
     this.controlled = false;    // 1인 모드에서 지금 플레이어가 조작 중인지
-    this.dashCharges = CONFIG.monster.dashCharges;
-    this.dashRechargeTimer = 0;
+    this.dashCooldown = 0;      // 남은 대시 쿨타임(0이면 사용 가능)
     this.dashTimer = 0;
     this.trailTimer = 0;
 
     // 알 관련 상태
     this.carrying = null;       // 들고 있는 작은 알
-    this.carryMode = typeKey === 'kkaburi' ? 'horn' : 'hands';
+    // 고유 스킬이 꺼져 있으면 까부리도 손으로 든다(감속 있음)
+    this.carryMode = typeKey === 'kkaburi' && CONFIG.features.uniqueSkills ? 'horn' : 'hands';
     this.belly = null;          // 삼킨 작은 알(꿀떡이)
     this.bellyTime = 0;
     this.dragging = null;       // 질질 끄는 큰 알
@@ -133,13 +133,10 @@ export default class Monster {
   update(dt) {
     const M = CONFIG.monster;
 
-    // 대시 충전 (한 번에 1개씩)
-    if (this.dashCharges < M.dashCharges) {
-      this.dashRechargeTimer -= dt;
-      if (this.dashRechargeTimer <= 0) {
-        this.dashCharges++;
-        this.dashRechargeTimer = this.dashCharges < M.dashCharges ? M.dashRecharge : 0;
-      }
+    // 대시 쿨타임
+    if (this.dashCooldown > 0) {
+      this.dashCooldown = Math.max(0, this.dashCooldown - dt);
+      if (this.dashCooldown === 0 && this.controlled) this.scene.fx.ring(this.x, this.y, 0x7cf0ff, this.radius + 14, 250);
     }
     this.graceTimer = Math.max(0, this.graceTimer - dt);
 
@@ -183,9 +180,8 @@ export default class Monster {
   }
 
   tryDash() {
-    if (this.dashCharges <= 0 || this.dashTimer > 0 || this.dragging) return false;
-    if (this.dashCharges === CONFIG.monster.dashCharges) this.dashRechargeTimer = CONFIG.monster.dashRecharge;
-    this.dashCharges--;
+    if (this.dashCooldown > 0 || this.dashTimer > 0 || this.dragging) return false;
+    this.dashCooldown = CONFIG.monster.dashCooldown;
     this.dashTimer = CONFIG.monster.dashDuration;
     this.scene.noise.emit(this.x, this.y, CONFIG.monster.dashNoise, 'dash');
     Sfx.dash();

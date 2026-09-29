@@ -44,6 +44,15 @@ export default class EggSystem {
     return { x, y };
   }
 
+  // 맵의 r 자리에 던질 수 있는 돌멩이
+  spawnStones(points) {
+    for (const p of points) this.list.push(new Egg(this.scene, p.x, p.y, 'stone'));
+  }
+
+  get eggsOnly() {
+    return this.list.filter((e) => !e.isStone);
+  }
+
   // ---------- 입력 처리 ----------
   handleActions(m) {
     const c = m.controls;
@@ -102,7 +111,7 @@ export default class EggSystem {
   }
 
   onPickup(egg, tension) {
-    if (egg.pickedOnce) return; // 같은 알을 다시 주울 때는 소란도 없음(내려놓고 줍기 반복 방지)
+    if (egg.isStone || egg.pickedOnce) return; // 같은 알을 다시 주울 때는 소란도 없음(내려놓고 줍기 반복 방지)
     egg.pickedOnce = true;
     this.scene.noise.emit(egg.x, egg.y, CONFIG.noise.pickup, 'pickup');
     this.scene.addTension(tension, 'pickup');
@@ -170,14 +179,15 @@ export default class EggSystem {
 
   // ---------- 꿀떡이 삼키기 ----------
   swallowOrSpit(m) {
-    if (m.typeKey !== 'kkuldduk') return;
+    if (!CONFIG.features.uniqueSkills || m.typeKey !== 'kkuldduk') return;
     if (m.belly) { this.spit(m, false); return; }
     if (m.coop) return; // 공동 운반 중엔 입이 막힘
     let egg = m.carrying;
+    if (egg && egg.isStone) return;
     if (egg) {
       m.carrying = null;
     } else {
-      egg = this.nearestGroundEgg(m, (e) => !e.big);
+      egg = this.nearestGroundEgg(m, (e) => !e.big && !e.isStone);
       if (!egg) return;
       this.onPickup(egg, CONFIG.tension.pickupSmall);
     }
@@ -387,7 +397,7 @@ export default class EggSystem {
 
     for (const e of [...this.list]) {
       e.update(dt);
-      if (e.broken || e.deposited) continue;
+      if (e.broken || e.deposited || e.isStone) continue;
       let px = e.x, py = e.y;
       if ((e.state === 'carried' || e.state === 'swallowed') && e.holder) { px = e.holder.x; py = e.holder.y; }
       if (e.state === 'air' && e.z > 20) continue;

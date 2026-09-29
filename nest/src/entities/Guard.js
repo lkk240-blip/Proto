@@ -111,11 +111,21 @@ export default class Guard {
     return this.state === 'sleep' || this.state === 'waking';
   }
 
+  // 던진 알·돌멩이에 맞음 → 잠깐 기절. 깨어나면 던진 쪽으로 화가 나서 찾아온다.
+  hitByThrow(from) {
+    const S = CONFIG.stone;
+    this.lastKnown = { x: from.x, y: from.y };
+    this.stunTimer = S.enemyStunTime;
+    this.setState('stunned');
+    this.scene.matter.body.setVelocity(this.body, { x: 0, y: 0 });
+    this.scene.tweens.add({ targets: this.bodyC, angle: { from: -25, to: 25 }, duration: 80, yoyo: true, repeat: 3, onComplete: () => { this.bodyC.angle = 0; } });
+  }
+
   speed() {
     const G = CONFIG.guard;
     return {
       patrol: G.patrolSpeed, return: G.patrolSpeed, tosleep: G.patrolSpeed, suspect: G.suspectSpeed,
-      chase: G.chaseSpeed, search: G.searchSpeed, gloat: 0, sleep: 0, waking: 0,
+      chase: G.chaseSpeed, search: G.searchSpeed, gloat: 0, sleep: 0, waking: 0, stunned: 0,
     }[this.state];
   }
 
@@ -155,7 +165,7 @@ export default class Guard {
         this.scene.fx.popText(this.x, this.y - this.radius - 30, '하암~', { color: '#d9c8ff', size: 20, depth: 56 });
       }
     }
-    if (this.eyesOpen !== (st !== 'sleep')) this.drawEyes(st !== 'sleep');
+    if (this.eyesOpen !== (st !== 'sleep' && st !== 'stunned')) this.drawEyes(st !== 'sleep' && st !== 'stunned');
     return prev;
   }
 
@@ -176,6 +186,7 @@ export default class Guard {
   // 소음 이벤트 수신: 파동이 몸(+청각 반경)에 닿으면 들림
   hear(n) {
     if (this.state === 'gloat') return;
+    if (this.state === 'stunned') { this.lastKnown = { x: n.x, y: n.y }; return; }
     const G = CONFIG.guard;
     const d = Phaser.Math.Distance.Between(this.x, this.y, n.x, n.y);
     if (d > n.size + G.hearingRadius + this.radius) return;
@@ -242,7 +253,16 @@ export default class Guard {
         }
       }
     }
-    if (this.state !== 'gloat' && !this.asleep) {
+    if (this.state === 'stunned') {
+      this.stunTimer -= dt;
+      if (this.stunTimer <= 0) {
+        this.suspicion = Math.max(this.suspicion, CONFIG.stone.angerSuspicion);
+        if (this.roamTimer <= 0) this.roamTimer = Phaser.Math.FloatBetween(G.roamMin, G.roamMax);
+        this.pop('!?', '#ffd23f');
+        this.setState(this.suspicion >= 100 ? 'chase' : 'suspect');
+      }
+    }
+    if (this.state !== 'gloat' && this.state !== 'stunned' && !this.asleep) {
       let gain = 0;
       for (const m of this.scene.monsters) {
         if (m.stunned) continue;
@@ -404,7 +424,7 @@ export default class Guard {
   }
 
   checkCatch() {
-    if (this.state === 'gloat') return;
+    if (this.state === 'gloat' || this.state === 'stunned') return;
     for (const m of this.scene.monsters) {
       if (m.stunned || m.graceTimer > 0) continue;
       const touching = Phaser.Math.Distance.Between(this.x, this.y, m.x, m.y) < this.radius + m.radius + 3;
@@ -466,16 +486,20 @@ export default class Guard {
 
     // 아이콘: 잠 "Zzz", 깨는 중 "!?", 의심/수색 "?", 추격 "!", 잡은 뒤 "♪"
     const st = this.state;
-    const icons = { sleep: 'Zzz', waking: this.alerted ? '!?' : '…', suspect: '?', search: '?', chase: '!', gloat: '♪' };
-    const colors = { sleep: '#a9c7ff', waking: '#ffd23f', suspect: '#ffd23f', search: '#ffa23f', chase: '#ff4d4d', gloat: '#9fc3ff' };
+    const icons = { sleep: 'Zzz', waking: this.alerted ? '!?' : '…', suspect: '?', search: '?', chase: '!', gloat: '♪', stunned: '★ ★' };
+    const colors = { sleep: '#a9c7ff', waking: '#ffd23f', suspect: '#ffd23f', search: '#ffa23f', chase: '#ff4d4d', gloat: '#9fc3ff', stunned: '#ffe14d' };
     this.icon.setText(icons[st] || '');
     this.icon.setColor(colors[st] || '#ffffff');
-    this.icon.setFontSize(st === 'sleep' ? 20 : 30);
+    this.icon.setFontSize(st === 'sleep' || st === 'stunned' ? 20 : 30);
     if (st === 'sleep') {
       const t = this.scene.time.now * 0.002;
       this.icon.setPosition(Math.sin(t) * 6 + 10, -this.radius - 18 - (t % 1) * 6);
+    } else if (st === 'stunned') {
+      this.icon.setPosition(0, -this.radius - 14);
+      this.icon.rotation = Math.sin(this.scene.time.now * 0.012) * 0.4;
     } else {
       this.icon.setPosition(0, -this.radius - 22);
+      this.icon.rotation = 0;
     }
     this.breath.timeScale = st === 'sleep' ? 1 : 3;
 

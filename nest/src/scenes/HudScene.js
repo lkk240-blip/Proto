@@ -84,23 +84,23 @@ export default class HudScene extends Phaser.Scene {
 
     // --- 몬스터 상태 ---
     const lines = gs.monsters.map((m) => {
-      const pips = '●'.repeat(m.dashCharges) + '○'.repeat(CONFIG.monster.dashCharges - m.dashCharges);
+      const dash = m.dashCooldown > 0 ? `대시 ${m.dashCooldown.toFixed(1)}s` : '대시 준비';
       let st = '';
       if (m.stunned) st = '기절!';
       else if (m.coop) st = '공동 운반';
       else if (m.dragging) st = '질질 끌기';
-      else if (m.carrying) st = m.carryMode === 'horn' ? '뿔에 알' : '알 들고';
+      else if (m.carrying) st = m.carrying.isStone ? '돌멩이' : m.carryMode === 'horn' ? '뿔에 알' : '알 들고';
       if (m.belly) st += (st ? ' + ' : '') + `삼킴 ${Math.ceil(CONFIG.kkuldduk.swallowLimit - m.bellyTime)}s`;
       const who = gs.mode === 'duo' ? `${m.tag} ` : (m.controlled ? '▶ ' : '   ');
-      return `${who}${m.type.name}  대시 ${pips}${st ? '  [' + st + ']' : ''}`;
+      return `${who}${m.type.name}  ${dash}${st ? '  [' + st + ']' : ''}`;
     });
     if (gs.mode === 'solo') lines.push(`동료: ${gs.companion.mode === 'wait' ? '기다려' : '따라와'}`);
     this.monsterText.setText(lines.join('\n'));
 
     // --- 조작 힌트 ---
     this.hint.setText(gs.mode === 'duo'
-      ? 'P1: WASD 이동 · 왼Shift 대시 · E 줍기 · Space 던지기 · R 삼키기      P2: 방향키 · 오른Ctrl · Enter · 오른Shift · 0      Esc 일시정지'
-      : 'WASD 이동 · Shift 대시 · E 줍기/내려놓기 · Space 던지기 · R 삼키기/뱉기 · Tab 교체 · Q 따라와/기다려 · Esc 일시정지 · ` 튜닝');
+      ? 'P1: WASD 이동 · 왼Shift 대시 · E 줍기 · Space 던지기      P2: 방향키 · 오른Ctrl 대시 · Enter 줍기 · 오른Shift 던지기      Esc 일시정지'
+      : 'WASD 이동 · Shift 대시 · E 줍기/내려놓기 · Space 던지기(괴수에 맞히면 기절) · Tab 교체 · Q 따라와/기다려 · Esc 일시정지 · ` 튜닝');
 
     // --- 조기 탈출 ---
     if (gs.exitHold > 0) {
@@ -135,7 +135,7 @@ export default class HudScene extends Phaser.Scene {
       for (const m of gs.monsters) targets.push({ x: m.x, y: m.y, color: 0x7cf0ff, label: m.tag });
     }
     for (const e of gs.eggs.list) {
-      if (e.state === 'carried' || e.state === 'swallowed' || e.state === 'coop' || e.state === 'drag') continue;
+      if (e.isStone || e.state === 'carried' || e.state === 'swallowed' || e.state === 'coop' || e.state === 'drag') continue;
       targets.push({ x: e.x, y: e.y, color: e.big ? 0x9fd0ff : 0xfff1a8, label: e.big ? '큰 알' : '알', small: true });
     }
     if (gs.chaser && !gs.chaser.gone) targets.push({ x: gs.chaser.x, y: gs.chaser.y, color: 0xff3030, label: '우두머리' });

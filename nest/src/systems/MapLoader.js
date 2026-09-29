@@ -6,7 +6,7 @@ export function parseMap(mapData, tileSize) {
   const width = Math.max(...rows.map((r) => r.length));
   const grid = []; // grid[y][x] = true 면 벽
   const chars = []; // 원래 글자(그림 그릴 때 숲/바위 구분용)
-  const points = { player: null, exits: [], nests: [], guards: [], waypoints: {} };
+  const points = { player: null, exits: [], nests: [], guards: [], waypoints: {}, stones: [] };
 
   const center = (x, y) => ({ x: x * tileSize + tileSize / 2, y: y * tileSize + tileSize / 2 });
 
@@ -20,6 +20,7 @@ export function parseMap(mapData, tileSize) {
       if (ch === 'P') points.player = center(x, y);
       else if (ch === 'X') points.exits.push({ tx: x, ty: y, ...center(x, y) });
       else if (ch === 'N') points.nests.push(center(x, y));
+      else if (ch === 'r') points.stones.push(center(x, y));
       else if (ch === 'G') points.guards.push(center(x, y));
       else if (ch >= '1' && ch <= '9') points.waypoints[ch] = center(x, y);
     }

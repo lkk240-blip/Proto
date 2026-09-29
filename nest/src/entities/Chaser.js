@@ -18,6 +18,7 @@ export default class Chaser {
     this.path = null;
     this.repath = 0;
     this.gloat = 0;
+    this.stunTimer = 0;
     this.visible = true;
     this.angle = 0;
 
@@ -76,10 +77,11 @@ export default class Chaser {
     this.life += dt;
     if (!this.leaving && this.life >= CONFIG.chaser.duration) this.leave();
     this.gloat = Math.max(0, this.gloat - dt);
+    this.stunTimer = Math.max(0, this.stunTimer - dt);
 
     const setV = (vx, vy) => this.scene.matter.body.setVelocity(this.body, { x: vx / 60, y: vy / 60 });
     const { m, hunting } = this.target();
-    if (this.leaving || this.gloat > 0 || !m) {
+    if (this.leaving || this.gloat > 0 || this.stunTimer > 0 || !m) {
       setV(0, 0);
     } else {
       // 알이 없으면 느릿느릿 어슬렁
@@ -113,7 +115,12 @@ export default class Chaser {
     this.view.setPosition(this.x, this.y);
     this.gfx.rotation = this.angle;
     this.tag.setPosition(this.x, this.y - this.radius - 18);
-    this.tag.setText(`우두머리 ${Math.ceil(this.remaining)}`);
+    this.tag.setText(this.stunTimer > 0 ? '★ 기절 ★' : `우두머리 ${Math.ceil(this.remaining)}`);
+  }
+
+  hitByThrow() {
+    this.stunTimer = CONFIG.stone.bossStunTime;
+    this.path = null;
   }
 
   leave() {

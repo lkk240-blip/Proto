@@ -22,8 +22,7 @@ export const DEFAULT_CONFIG = {
     baseSpeed: 200,        // 기본 이동 속도
     radius: 16,            // 몸체 반지름(px) — 종류별 배율로 조정 (실행 중 변경 불가)
     accel: 0.25,           // 0~1, 입력 방향으로 속도가 붙는 빠르기(관성 느낌)
-    dashCharges: 2,        // 대시 최대 충전 수
-    dashRecharge: 6,       // 대시 1회 재충전 시간
+    dashCooldown: 3,       // 대시 쿨타임(초) — 쓰고 나서 이 시간이 지나야 다시 사용 가능
     dashSpeed: 900,        // 대시 중 속도
     dashDuration: 0.12,    // 대시 지속 시간
     dashNoise: 120,        // 대시 소음 크기(파동 반경)
@@ -36,6 +35,11 @@ export const DEFAULT_CONFIG = {
   monsterTypes: {
     kkuldduk: { name: '꿀떡이', color: 0x8b5a2b, radiusMul: 1.25, speedMul: 0.9 },
     kkaburi: { name: '까부리', color: 0xf2f2f2, radiusMul: 0.85, speedMul: 1.1 },
+  },
+
+  // 기능 켜기/끄기
+  features: {
+    uniqueSkills: false,   // 캐릭터 고유 스킬(꿀떡이 삼키기, 까부리 뿔 운반). 끄면 둘 다 일반 운반만 함
   },
 
   egg: {
@@ -58,6 +62,17 @@ export const DEFAULT_CONFIG = {
     landCrackSpeed: 300,   // 착지할 때 낙하 속도가 이 이상이면 금 1단계
     catchRadius: 26,       // 몸 가장자리에서 이 거리 안이면 공중의 알을 받음
     catchMaxHeight: 60,    // 이 높이 아래로 내려온 알만 받을 수 있음
+    crackOnEnemyHit: true, // 던진 알이 괴수에 맞으면 알도 금 1단계(기절시키는 대가)
+  },
+
+  // 던지기로 적 기절시키기(알·돌멩이 공통)
+  stone: {
+    radius: 12,            // 돌멩이 크기(실행 중 변경 불가)
+    enemyStunTime: 2.5,    // 명중한 괴수가 기절하는 시간(초)
+    bossStunTime: 1.5,     // 우두머리 괴수가 기절하는 시간(초)
+    hitHeight: 90,         // 이 높이 아래로 날아가는 물건만 괴수에 맞음(괴수가 크니까 넉넉히)
+    hitNoise: 110,         // 명중 소리 크기(주변 괴수가 들을 수 있음)
+    angerSuspicion: 80,    // 기절에서 깬 괴수의 의심(던진 곳으로 찾아옴)
   },
 
   bigEgg: {

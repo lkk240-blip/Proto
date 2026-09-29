@@ -49,6 +49,7 @@ export default class GameScene extends Phaser.Scene {
     this.spawnMonsters();
     this.eggs = new EggSystem(this);
     this.eggs.spawn(this.map.points.nests);
+    this.eggs.spawnStones(this.map.points.stones);
     this.guards = this.spawnGuards();
     this.noise.onNoise((n) => {
       for (const g of this.guards) g.hear(n);
