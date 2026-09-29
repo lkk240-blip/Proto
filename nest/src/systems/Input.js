@@ -14,7 +14,6 @@ class KeyState {
     this.pressed = new Set(); // 이번 프레임에 새로 눌린 키
     window.addEventListener('keydown', (e) => {
       if (isTyping(e)) return;
-      if (PREVENT.has(e.code)) e.preventDefault();
       if (!this.down.has(e.code)) this.pressed.add(e.code);
       this.down.add(e.code);
     });
@@ -22,6 +21,14 @@ class KeyState {
       this.down.delete(e.code);
     });
     window.addEventListener('blur', () => this.down.clear());
+  }
+
+  // 브라우저 기본 동작(Tab 포커스 이동, Space 스크롤 등) 막기.
+  // Phaser 는 defaultPrevented 된 키 이벤트를 무시하므로, Phaser 리스너보다 나중에 등록해야 한다(main.js 에서 호출).
+  installPreventDefault() {
+    window.addEventListener('keydown', (e) => {
+      if (!isTyping(e) && PREVENT.has(e.code)) e.preventDefault();
+    });
   }
 
   isDown(code) { return this.down.has(code); }

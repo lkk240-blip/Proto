@@ -233,7 +233,10 @@ export default class Monster {
     this.bodyC.x = warn ? Phaser.Math.FloatBetween(-3, 3) : 0;
     this.bodyC.y = warn ? Phaser.Math.FloatBetween(-2, 2) : 0;
     const bellyScale = this.belly ? 1.18 : 1;
-    this.bodyC.setScale(bellyScale);
+    // 걸을 때 통통 튀는 느낌(찌그러짐)
+    const spd = Math.hypot(this.body.velocity.x, this.body.velocity.y) * 60;
+    const bob = !this.stunned && spd > 30 ? Math.sin(this.scene.time.now * 0.025) * 0.07 : 0;
+    this.bodyC.setScale(bellyScale * (1 - bob * 0.5), bellyScale * (1 + bob));
 
     this.stars.setVisible(this.stunned);
     if (this.stunned) this.stars.rotation = Math.sin(this.scene.time.now * 0.01) * 0.3;

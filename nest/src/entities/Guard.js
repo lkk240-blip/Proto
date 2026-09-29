@@ -83,6 +83,7 @@ export default class Guard {
       Sfx.alert();
       this.pop('!', '#ff4d4d');
       this.scene.addTension(CONFIG.tension.chaseStart, 'chase');
+      if (this.visible) this.scene.fx.shake(150, 0.006);
       this.scene.stats.chases = (this.scene.stats.chases || 0) + 1;
     } else if (st === 'search') {
       this.searchCenter = this.lastKnown ? { ...this.lastKnown } : { x: this.x, y: this.y };

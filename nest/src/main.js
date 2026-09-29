@@ -3,6 +3,9 @@ import { CONFIG } from './config.js';
 import GameScene from './scenes/GameScene.js';
 import HudScene from './scenes/HudScene.js';
 import ResultScene from './scenes/ResultScene.js';
+import StartScene from './scenes/StartScene.js';
+import TuningPanel from './ui/TuningPanel.js';
+import { keys } from './systems/Input.js';
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,
@@ -22,8 +25,12 @@ const game = new Phaser.Game({
       debug: false,
     },
   },
-  scene: [GameScene, HudScene, ResultScene],
+  scene: [StartScene, GameScene, HudScene, ResultScene],
 });
+
+game.events.once('ready', () => keys.installPreventDefault());
 
 // 브라우저 콘솔에서 확인용
 window.__game = game;
+
+window.__tuning = new TuningPanel();
