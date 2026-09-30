@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "zip": "cd dist && bestzip ../nest-prototype.zip *",
+    "zip": "node -e \"require('fs').rmSync('nest-prototype.zip',{force:true})\" && cd dist && bestzip ../nest-prototype.zip *",
     "release": "npm run build && npm run zip"
   },
   "dependencies": {
