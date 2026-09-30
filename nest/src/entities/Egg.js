@@ -83,13 +83,17 @@ export default class Egg {
     const g = this.gfx;
     if (this.isStone) {
       const r = this.radius;
+      const hits = this.stoneHits || 0;
       g.clear();
-      g.fillStyle(0x8a8f96, 1);
+      g.fillStyle(hits >= CONFIG.stone.durability - 1 ? 0x75797f : 0x8a8f96, 1);
       g.lineStyle(2, 0x3a3d42, 1);
       g.fillEllipse(0, 0, r * 2.2, r * 1.8);
       g.strokeEllipse(0, 0, r * 2.2, r * 1.8);
       g.fillStyle(0xb5bac1, 1);
       g.fillEllipse(-r * 0.35, -r * 0.3, r * 0.9, r * 0.6);
+      // 부딪힌 횟수만큼 금
+      g.lineStyle(2, 0x2a2c30, 1);
+      for (let i = 0; i < Math.min(hits, 3); i++) g.strokePoints(this.crackPaths[i], false);
       return;
     }
     const rx = this.radius * 0.8, ry = this.radius * 1.05;
@@ -138,7 +142,8 @@ export default class Egg {
 
   // 충격 → 금 1단계. reason 은 기록용.
   crack(reason = '') {
-    if (this.isStone || this.broken || this.deposited || this.state === 'swallowed') return false;
+    if (this.isStone) return this.stoneHit(reason);
+    if (this.broken || this.deposited || this.state === 'swallowed') return false;
     if (this.crackCd > 0) return false;
     this.crackCd = CONFIG.egg.crackCooldown;
     this.cracks++;
@@ -155,6 +160,27 @@ export default class Egg {
     Sfx.crack();
     this.scene.tweens.add({ targets: this.view, scaleX: 1.35, scaleY: 0.75, duration: 70, yoyo: true, repeat: 1 });
     this.scene.fx.burst(x, y, 0xfff1d0, 4, 60, 3);
+    return true;
+  }
+
+  // 돌: 부딪힐 때마다 내구도 감소, 다 닳으면 와작 부서짐
+  stoneHit(reason = '') {
+    if (this.broken || this.crackCd > 0) return false;
+    this.crackCd = 0.15;
+    this.stoneHits = (this.stoneHits || 0) + 1;
+    if (this.stoneHits < CONFIG.stone.durability) {
+      this.redraw();
+      return true;
+    }
+    this.broken = true;
+    const { x, y } = this.displayPos();
+    this.scene.stats.stonesBroken = (this.scene.stats.stonesBroken || 0) + 1;
+    this.scene.eggs.onEggBroken(this);
+    this.scene.fx.popText(x, y - 14, '와작!', { color: '#c9ced6', size: 22 });
+    this.scene.fx.burst(x, y, 0x8a8f96, 10, 150, 6);
+    this.scene.noise.emit(x, y, CONFIG.stone.breakNoise, 'stone-break');
+    Sfx.bump();
+    this.destroy();
     return true;
   }
 
@@ -234,7 +260,7 @@ export default class Egg {
       const impact = -a.vz;
       this.z = 0;
       a.bounces = (a.bounces || 0) + 1;
-      if (impact >= E.landCrackSpeed) this.crack('land');
+      if (impact >= E.landCrackSpeed || (this.isStone && a.bounces === 1)) this.crack('land'); // 돌은 던질 때마다 착지 1회 닳음
       else Sfx.bump();
       if (this.broken) return;
       if (a.bounces === 1) this.scene.noise.emit(this.x, this.y, CONFIG.noise.bump, 'land');
@@ -282,7 +308,7 @@ export default class Egg {
       a.vx *= -0.3;
       a.vy *= -0.3;
       a.vz = Math.min(a.vz, 60);
-      if (!this.isStone && CONFIG.egg.crackOnEnemyHit) {
+      if (this.isStone || CONFIG.egg.crackOnEnemyHit) {
         this.crackCd = 0;
         this.crack('enemy-hit');
         if (this.broken) return true;

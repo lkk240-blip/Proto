@@ -213,7 +213,7 @@ export default class EggSystem {
       if (!e.big || e.state !== 'ground') continue;
       let vx = 0, vy = 0, n = 0;
       for (const m of this.scene.monsters) {
-        if (m.stunned || m.carrying || m.extracting) continue;
+        if (m.stunned || (m.carrying && !m.carrying.isStone) || m.extracting) continue; // 돌은 들고도 밀 수 있음
         const dx = e.x - m.x, dy = e.y - m.y;
         const d = Math.hypot(dx, dy);
         if (d > m.radius + e.radius + 8) continue;
@@ -232,6 +232,8 @@ export default class EggSystem {
       const len = Math.hypot(vx, vy);
       const cap = n > 1 ? B.pushMaxSpeed : Math.min(len, B.pushMaxSpeed);
       if (len > cap) { vx = (vx / len) * cap; vy = (vy / len) * cap; }
+      // 미는 몬스터는 알이 굴러가는 속도에 맞춰 걷는다(너무 빨라서 알에서 떨어지거나 너무 느려서 뒤처지지 않게)
+      e.pushSpeedTarget = Math.min(len, cap);
       const v = e.body.velocity;
       const k = 1 - Math.pow(0.8, dt * 60);
       e.setVelocityPx(Phaser.Math.Linear(v.x * 60, vx, k), Phaser.Math.Linear(v.y * 60, vy, k));

@@ -65,6 +65,7 @@ export default class Companion {
   think(dt, self, leader) {
     const C = CONFIG.companion;
     this.move = { x: 0, y: 0 };
+    self.hurry = false;
     self.statusText = this.mode === 'wait' ? '대기' : '';
     if (self.stunned || !leader) { this.farTimer = 0; return; }
 
@@ -233,7 +234,7 @@ export default class Companion {
     if (e) { this.assistEgg = e; this.assistT = 0.6; }
     else this.assistT = Math.max(0, (this.assistT || 0) - dt);
     const egg = this.assistEgg;
-    if (!egg || this.assistT <= 0 || egg.broken || egg.deposited || self.carrying) return false;
+    if (!egg || this.assistT <= 0 || egg.broken || egg.deposited || (self.carrying && !self.carrying.isStone)) return false;
     const lm = leader.controls ? leader.controls.getMove() : { x: 0, y: 0 };
     let dir = { x: lm.x, y: lm.y };
     let len = Math.hypot(dir.x, dir.y);
@@ -245,23 +246,41 @@ export default class Companion {
     }
     dir.x /= len; dir.y /= len;
     const perp = { x: -dir.y, y: dir.x };
-    // 조작 몬스터 반대편 옆자리를 골라 나란히 밀기
-    const side = ((leader.x - egg.x) * perp.x + (leader.y - egg.y) * perp.y) > 0 ? -1 : 1;
+    // 조작 몬스터 반대편 옆자리를 골라 나란히 밀기(벽 안이면 다른 자리)
+    const map = this.scene.map;
+    const pref = ((leader.x - egg.x) * perp.x + (leader.y - egg.y) * perp.y) > 0 ? -1 : 1;
     const back = egg.radius + self.radius + 2;
-    const spot = { x: egg.x - dir.x * back + perp.x * side * egg.radius * 0.6, y: egg.y - dir.y * back + perp.y * side * egg.radius * 0.6 };
-    const ahead = (self.x - egg.x) * dir.x + (self.y - egg.y) * dir.y > 0;
+    let spot = null, side = pref;
+    for (const k of [pref * 0.6, 0, -pref * 0.6]) {
+      const c = { x: egg.x - dir.x * back + perp.x * k * egg.radius, y: egg.y - dir.y * back + perp.y * k * egg.radius };
+      if (isFreeSpot(map, c.x, c.y, self.radius)) { spot = c; side = k === 0 ? pref : Math.sign(k); break; }
+    }
+    if (!spot) return false;
+    const rel = { x: self.x - egg.x, y: self.y - egg.y };
+    const along = rel.x * dir.x + rel.y * dir.y;
+    const ahead = along > -egg.radius * 0.3;
+    const touching = Math.hypot(rel.x, rel.y) <= egg.radius + self.radius + 10;
     let target = spot;
     if (ahead) {
-      // 알 앞쪽에 있으면 옆으로 돌아서 뒤로
-      target = { x: egg.x + perp.x * side * (egg.radius + self.radius + 12), y: egg.y + perp.y * side * (egg.radius + self.radius + 12) };
+      // 알 옆·앞쪽에 있으면 옆으로 돌아서 뒤로(가까운 옆, 벽이면 반대 옆)
+      const s0 = (rel.x * perp.x + rel.y * perp.y) >= 0 ? 1 : -1;
+      const wide = egg.radius + self.radius + 14;
+      const a = { x: egg.x + perp.x * s0 * wide - dir.x * egg.radius * 0.5, y: egg.y + perp.y * s0 * wide - dir.y * egg.radius * 0.5 };
+      const b = { x: egg.x - perp.x * s0 * wide - dir.x * egg.radius * 0.5, y: egg.y - perp.y * s0 * wide - dir.y * egg.radius * 0.5 };
+      target = isFreeSpot(map, a.x, a.y, self.radius) ? a : b;
     }
     const dx = target.x - self.x, dy = target.y - self.y;
     const d = Math.hypot(dx, dy);
-    if (!ahead && d < 14) {
-      this.move = { x: dir.x, y: dir.y }; // 제자리에 붙었으면 같이 밀기
+    if (!ahead && touching) {
+      // 알 뒤에 붙어 있음: 미는 방향 + 자리 보정을 섞어서 같이 밀기
+      const cx = d > 1 ? dx / d : 0, cy = d > 1 ? dy / d : 0;
+      let mx = dir.x + cx * 0.35, my = dir.y + cy * 0.35;
+      const ml = Math.hypot(mx, my) || 1;
+      this.move = { x: mx / ml, y: my / ml };
     } else if (d > 1) {
-      if (d > 300 || !hasClearPath(this.scene.map, self.x, self.y, target.x, target.y, self.radius * 0.8)) return false; // 멀거나 막혀 있으면 평소처럼 따라감
+      if (d > 300 || !hasClearPath(map, self.x, self.y, target.x, target.y, self.radius * 0.8)) return false; // 멀거나 막혀 있으면 평소처럼 따라감
       this.move = { x: dx / d, y: dy / d };
+      self.hurry = true; // 굴러가는 알을 따라잡도록 잠깐 빠르게
     }
     self.statusText = '같이 밀자!';
     return true;

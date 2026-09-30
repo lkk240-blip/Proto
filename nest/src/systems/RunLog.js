@@ -43,6 +43,7 @@ export function buildRecordText(r) {
     `큰 알 민 시간: ${s.pushTime.toFixed(1)}초`,
     `팔 저려 떨어뜨림: ${s.fatigueDrops}`,
     `괴수 명중: ${s.enemyHits}`,
+    `부서진 돌: ${s.stonesBroken || 0}`,
     `교체 횟수: ${s.swaps}`,
     `던지기/받기: ${s.throws}/${s.catches}`,
     `플레이 시간: ${sec(s.playTime)}`,

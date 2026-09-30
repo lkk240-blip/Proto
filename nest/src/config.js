@@ -119,6 +119,8 @@ export const DEFAULT_CONFIG = {
   // 던지기로 적 기절시키기(알·돌멩이 공통)
   stone: {
     radius: 12,            // 돌멩이 크기(실행 중 변경 불가)
+    durability: 4,         // 돌 내구도: 착지·벽·괴수에 이만큼 부딪히면 부서짐(던질 때마다 착지 1 + 벽/괴수 명중마다 1)
+    breakNoise: 80,        // 돌이 부서질 때 소음
     enemyStunTime: 2.5,    // 명중한 괴수가 기절하는 시간(초)
     bossStunTime: 1.5,     // 우두머리 괴수가 기절하는 시간(초)
     hitHeight: 90,         // 이 높이 아래로 날아가는 물건만 괴수에 맞음(괴수가 크니까 넉넉히)

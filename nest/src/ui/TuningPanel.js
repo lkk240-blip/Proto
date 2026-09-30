@@ -39,6 +39,7 @@ const FIELDS = [
   ['stone', 'enemyStunTime', '괴수 기절 시간(초)', 0, 10, 0.1],
   ['stone', 'bossStunTime', '우두머리 기절 시간(초)', 0, 10, 0.1],
   ['stone', 'hitNoise', '명중 소리 크기', 0, 300, 10],
+  ['stone', 'durability', '돌 내구도(부딪힘 횟수)', 1, 20, 1],
   ['괴수'],
   ['guard', 'patrolSpeed', '괴수 로밍 속도', 30, 300, 5],
   ['guard', 'chaseSpeed', '괴수 추격 속도', 60, 400, 5],
