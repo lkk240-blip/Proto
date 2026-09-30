@@ -33,6 +33,7 @@ const FIELDS = [
   ['companion', 'passFatigue', '패스하는 피로도', 0.1, 1, 0.05],
   ['companion', 'stoneRange', '돌 던지는 거리', 50, 500, 10],
   ['companion', 'stonePickRange', '멈춰 있을 때 돌 줍는 거리', 0, 400, 10],
+  ['companion', 'eggPickRange', '동료가 알 주우러 가는 거리(0=끔)', 0, 400, 10],
   ['수풀'],
   ['bush', 'sightMul', '수풀 속 발견 속도 배율', 0, 1, 0.05],
   ['bush', 'closeRange', '수풀이어도 들키는 거리', 0, 200, 5],

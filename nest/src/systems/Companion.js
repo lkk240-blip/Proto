@@ -75,8 +75,8 @@ export default class Companion {
     if (this.mode === 'wait') {
       this.farTimer = 0;
       if (!this.post) this.post = { x: self.x, y: self.y };
-      // 기다리는 동안 근처 돌은 주워 두고, 다시 제자리로
-      if (this.seekStone(self, this.post)) return;
+      // 기다리는 동안 근처 알·돌은 주워 두고, 다시 제자리로
+      if (this.seekItem(self, this.post, C.stonePickRange, leader)) return;
       this.walkTo(self, this.post, 10);
       return;
     }
@@ -84,6 +84,10 @@ export default class Companion {
 
     // 2) 내가 큰 알을 밀고 있으면 같은 방향 뒤에서 같이 밀기
     if (C.pushAssist && this.assistPush(dt, self, leader)) return;
+
+    // 3) 근처에 굴러다니는 작은 알이 있으면 주워 옴(나에게서 너무 멀어지지 않는 범위)
+    if (!self.carrying && Phaser.Math.Distance.Between(self.x, self.y, leader.x, leader.y) < C.eggPickLeash &&
+      this.seekItem(self, self, C.eggPickRange, leader, true)) return;
 
     const map = this.scene.map;
     const d = Phaser.Math.Distance.Between(self.x, self.y, leader.x, leader.y);
@@ -97,7 +101,7 @@ export default class Companion {
     }
 
     if (d < C.stopDistance && directOk) { // 충분히 가까우면 멈춤 — 멈춰 있는 동안 근처 돌 줍기
-      this.seekStone(self, self);
+      this.seekItem(self, self, C.stonePickRange, leader);
       return;
     }
 
@@ -179,27 +183,47 @@ export default class Companion {
     return false;
   }
 
-  // 멈춰 있을 때: center 에서 stonePickRange 안의 바닥 돌을 주우러 감. 움직이는 중이면 true
-  seekStone(self, center) {
+  // center 에서 R 안의 바닥 물건(작은 알 우선, 그다음 돌)을 주우러 감. 걸어가는 중이면 true.
+  // eggsOnly=true 면 알만 찾음(따라와 이동 중 — 돌은 멈춰 있을 때만 줍기)
+  seekItem(self, center, R, leader, eggsOnly = false) {
     if (self.carrying || self.extracting) return false;
+    const C = CONFIG.companion;
     const eggs = this.scene.eggs;
     const map = this.scene.map;
-    const R = CONFIG.companion.stonePickRange;
-    let best = null, bd = Infinity;
+    const now = this.scene.time.now;
+    let best = null, bd = Infinity, bestIsEgg = false;
     for (const e of eggs.list) {
-      if (!e.isStone || e.state !== 'ground') continue;
+      if (e.state !== 'ground' || e.big || e.puller) continue;
+      const isEgg = !e.isStone;
+      if (eggsOnly && !isEgg) continue;
+      if (isEgg) {
+        if (self.fatigue > C.eggPickMaxFatigue) continue;          // 지쳐 있으면 알은 안 듦
+        if (e.speedPx > 80) continue;                               // 굴러가는 중
+        if (e.droppedBy === leader && now - (e.droppedAt || 0) < C.ignoreDroppedMs) continue; // 내가 방금 내려놓은 알
+        if (e.droppedBy === self && now - (e.droppedAt || 0) < 2500) continue;               // 자기가 방금 내려놓은 알
+      } else if (R <= 0) continue;
       if (Phaser.Math.Distance.Between(center.x, center.y, e.x, e.y) > R) continue;
       const d = Phaser.Math.Distance.Between(self.x, self.y, e.x, e.y);
-      if (d < bd && hasClearPath(map, self.x, self.y, e.x, e.y, self.radius * 0.8)) { best = e; bd = d; }
+      // 알을 돌보다 우선
+      const better = (isEgg && !bestIsEgg) || (isEgg === bestIsEgg && d < bd);
+      if (better && hasClearPath(map, self.x, self.y, e.x, e.y, self.radius * 0.8)) { best = e; bd = d; bestIsEgg = isEgg; }
     }
     if (!best) return false;
     if (bd <= eggs.reach(self, best) - 4) {
       eggs.attachCarry(self, best);
-      this.scene.fx.popText(self.x, self.y - self.radius - 26, '돌 하나 챙겼어', { color: '#d0d4da', size: 15 });
+      if (bestIsEgg) {
+        eggs.onPickup(best, CONFIG.tension.pickupSmall);
+        this.scene.fx.popText(self.x, self.y - self.radius - 26, '알은 내가 들게!', { color: '#fff1a8', size: 15 });
+        this.scene.stats.aiEggPicks = (this.scene.stats.aiEggPicks || 0) + 1;
+      } else {
+        this.scene.fx.popText(self.x, self.y - self.radius - 26, '돌 하나 챙겼어', { color: '#d0d4da', size: 15 });
+      }
       return false;
     }
     this.walkTo(self, best, 0);
-    self.statusText = this.mode === 'wait' ? '대기 (돌 줍는 중)' : '돌 줍는 중';
+    const what = bestIsEgg ? '알' : '돌';
+    self.statusText = this.mode === 'wait' ? `대기 (${what} 줍는 중)` : `${what} 줍는 중`;
+    self.hurry = bestIsEgg; // 알은 서둘러 주움
     return true;
   }
 

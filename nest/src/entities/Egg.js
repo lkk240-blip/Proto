@@ -328,7 +328,7 @@ export default class Egg {
         x = h.x + h.facing.x * d; y = h.y + h.facing.y * d;
         z = 6;
       } else {
-        x = h.x; y = h.y; z = h.radius + 14; scale = 0.85;
+        x = h.x; y = h.y; z = h.radius + 14 - (h.carrySag || 0); scale = 0.85;
       }
       depth = h.inBush ? 16 : 11;
     }
@@ -339,7 +339,15 @@ export default class Egg {
     // 곧 깨질 알(금 2단계)은 부들부들 떨림
     const wobble = this.cracks >= 2 ? Math.sin(this.scene.time.now * 0.03) * 0.12 : 0;
     this.view.setPosition(x, y - z).setScale(scale).setDepth(depth);
-    this.view.rotation = (this.state === 'carried' ? 0 : this.roll || 0) + wobble;
+    // 들고 있는 사람이 지칠수록 알이 머리 위에서 점점 크게 흔들림
+    let tilt = 0;
+    if (this.state === 'carried' && h && !this.isStone) {
+      const f = h.fatigue || 0;
+      const t = this.scene.time.now * (0.008 + f * 0.02);
+      tilt = Math.sin(t) * 0.5 * f * f;
+      if (f > 0.85) this.view.x += Math.sin(this.scene.time.now * 0.06) * 2.5;
+    }
+    this.view.rotation = (this.state === 'carried' ? tilt : this.roll || 0) + wobble;
     const zs = Math.max(0.4, 1 - z / 150);
     this.shadow.setPosition(x, y + this.radius * 0.6).setScale(zs * scale).setAlpha(0.35 * zs);
   }

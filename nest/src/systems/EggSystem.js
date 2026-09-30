@@ -168,6 +168,8 @@ export default class EggSystem {
   releaseCarry(m) {
     const egg = m.carrying;
     if (!egg) return null;
+    egg.droppedBy = m;
+    egg.droppedAt = this.scene.time.now;
     m.carrying = null;
     egg.holder = null;
     egg.state = 'ground';

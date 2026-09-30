@@ -220,6 +220,10 @@ export const DEFAULT_CONFIG = {
     stoneCooldown: 1.2,    // 동료 돌 던지기 최소 간격(초)
     pushAssist: true,      // 내가 큰 알을 밀면 동료가 같은 방향 뒤에서 같이 밀기
     stonePickRange: 130,   // 동료가 멈춰 있을 때(기다려 / 내 옆에 서 있음) 이 거리 안의 돌은 직접 주워 듦
+    eggPickRange: 160,     // "따라와" 동료가 이 거리 안의 바닥 작은 알을 주워 옴(기다려일 땐 stonePickRange)
+    eggPickLeash: 320,     // 알을 주우러 갈 때 나(조작 몬스터)에게서 이 이상 멀어지지 않음
+    eggPickMaxFatigue: 0.3,// 동료 피로도가 이보다 높으면 알을 줍지 않음(내려놓기↔줍기 반복 방지)
+    ignoreDroppedMs: 1500, // 내가 방금 내려놓은 알은 이 시간 동안 줍지 않음(쉬려고 내려놓은 알을 채가지 않게)
     trailSpacing: 10,      // 발자국 기록 간격
     stopDistance: 70,      // 조작 몬스터와 이 거리 안이면 멈춤
     teleportDelay: 3,      // 이 시간 이상 멀어져 있으면(화면 밖일 때) 순간이동

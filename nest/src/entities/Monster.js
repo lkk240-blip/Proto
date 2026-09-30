@@ -38,6 +38,7 @@ export default class Monster {
     this.pushing = null;        // 밀고 있는 큰 알(EggSystem 이 매 프레임 갱신)
     this.extracting = null;     // 둥지에서 알 꺼내는 중
     this.fatigue = 0;           // 알을 오래 들면 쌓이는 피로도 0~1
+    this.carrySag = 0;          // 지쳐서 머리 위 알이 내려앉은 정도(px)
 
     this.stunTimer = 0;
     this.graceTimer = 0;
@@ -135,11 +136,27 @@ export default class Monster {
       g.fillStyle(0x000000, 0.6).fillRect(x0 + i * (w + gap) - 1, y - 1, w + 2, 7);
       g.fillStyle(i < this.hp ? 0xff5d6c : 0x3a3a3a, 1).fillRect(x0 + i * (w + gap), y, w, 5);
     }
-    // 피로도(알을 오래 들면 차오름, 가득 차면 떨어뜨림)
-    if (this.fatigue > 0.01) {
+    const f = this.fatigue;
+    const heavy = this.carrying && !this.carrying.isStone && this.carryMode === 'hands';
+    if (heavy && f > 0.01) {
+      // 들고 있는 알 둘레의 원형 피로 게이지(노랑 → 주황 → 빨강, 막판엔 깜빡임)
+      const ez = this.radius + 14 - (this.carrySag || 0);
+      const er = this.carrying.radius + 6;
+      const col = f < 0.5 ? 0xffd23f : f < 0.8 ? 0xff9a3a : 0xff4d4d;
+      const blink = f > 0.85 && Math.floor(this.scene.time.now / 110) % 2;
+      g.lineStyle(5, 0x000000, 0.45);
+      g.strokeCircle(0, -ez, er);
+      if (!blink) {
+        g.lineStyle(4, col, 1);
+        g.beginPath();
+        g.arc(0, -ez, er, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * f);
+        g.strokePath();
+      }
+    } else if (f > 0.01) {
+      // 내려놓은 뒤 회복 중: 발밑에 작은 막대
       const fw = n * w + (n - 1) * gap, fy = y + 8;
       g.fillStyle(0x000000, 0.6).fillRect(x0 - 1, fy - 1, fw + 2, 5);
-      g.fillStyle(this.fatigue > 0.75 ? 0xff7b3a : 0xffd23f, 1).fillRect(x0, fy, fw * this.fatigue, 3);
+      g.fillStyle(f >= 1 ? 0xff4d4d : 0x9fd3ff, 1).fillRect(x0, fy, fw * f, 3);
     }
     if (this.downed && this.reviveProgress > 0) {
       g.lineStyle(4, 0x8cf5a8, 1);
@@ -147,6 +164,17 @@ export default class Monster {
       g.arc(0, 0, this.radius + 10, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * this.reviveProgress);
       g.strokePath();
     }
+  }
+
+  // 땀방울: 머리 옆에서 톡 튀어 떨어짐
+  spawnSweat() {
+    const side = Math.random() < 0.5 ? -1 : 1;
+    const x = this.x + side * this.radius * 0.8, y = this.y - this.radius * 0.6;
+    const d = this.scene.add.ellipse(x, y, 5, 8, 0x9fe3ff, 0.95).setDepth(12);
+    this.scene.tweens.add({
+      targets: d, x: x + side * 12, y: y + 16, alpha: 0, scaleY: 0.6, duration: 450, ease: 'Quad.easeIn',
+      onComplete: () => d.destroy(),
+    });
   }
 
   speed() {
@@ -291,7 +319,19 @@ export default class Monster {
     // 걸을 때 통통 튀는 느낌(찌그러짐)
     const spd = Math.hypot(this.body.velocity.x, this.body.velocity.y) * 60;
     const bob = !this.stunned && spd > 30 ? Math.sin(this.scene.time.now * 0.025) * 0.07 : 0;
-    this.bodyC.setScale(bellyScale * (1 - bob * 0.5), bellyScale * (1 + bob));
+    // 알이 무거워질수록: 몸이 짓눌려 납작해지고, 땀이 나고, 알이 머리 위에서 미끄러져 내려옴
+    const f = this.carrying && !this.carrying.isStone ? this.fatigue : 0;
+    const squash = 1 - 0.14 * f * f;
+    this.bodyC.setScale(bellyScale * (1 - bob * 0.5) * (1 + 0.08 * f * f), bellyScale * (1 + bob) * squash);
+    this.carrySag = f * f * 10; // Egg.syncView 가 읽음(알이 내려앉는 정도)
+    if (f > 0.45 && !this.stunned) {
+      this.sweatT = (this.sweatT || 0) - 1 / 60;
+      if (this.sweatT <= 0) {
+        this.sweatT = 0.55 - 0.4 * f;
+        this.spawnSweat();
+      }
+    }
+    if (f > 0.85 && !this.stunned) this.bodyC.x += Phaser.Math.FloatBetween(-1.5, 1.5); // 부들부들
 
     this.stars.setVisible(this.stunTimer > 0 && !this.downed);
     if (this.stunned) this.stars.rotation = Math.sin(this.scene.time.now * 0.01) * 0.3;
@@ -308,6 +348,13 @@ export default class Monster {
       this.status.setColor(warn ? '#ff6b6b' : '#ffd79a');
     } else {
       this.status.setColor('#9fe8ff');
+    }
+    if (f > 0.88) {
+      st = Math.floor(this.scene.time.now / 150) % 2 ? '놓친다!' : '놓친다!!';
+      this.status.setColor('#ff5d5d');
+    } else if (f > 0.6 && !st) {
+      st = '무거워…';
+      this.status.setColor('#ffb36b');
     }
     if (this.downed) {
       st = this.reviveProgress > 0 ? `부활 중 ${Math.round(this.reviveProgress * 100)}%` : '쓰러짐 — 동료가 E로 부활';
