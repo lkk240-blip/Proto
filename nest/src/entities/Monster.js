@@ -55,7 +55,7 @@ export default class Monster {
   get y() { return this.body.position.y; }
   // 쓰러진 것도 "행동 불가"로 취급(잡히지 않음, 조작·줍기 불가)
   get stunned() { return this.stunTimer > 0 || this.downed; }
-  get hasEgg() { return !!((this.carrying && !this.carrying.isStone) || this.belly || this.pushing); }
+  get hasEgg() { return !!((this.carrying && !this.carrying.isStone) || this.belly || this.pushing || this.pulling); }
 
   canHold() {
     return !this.stunned && !this.carrying && !this.extracting;
@@ -154,6 +154,7 @@ export default class Monster {
     if (this.carrying && this.carryMode === 'hands') s *= 1 - CONFIG.egg.carrySmallSlow;
     // 오래 들고 있을수록 점점 느려짐
     if (this.carrying && !this.carrying.isStone) s *= 1 - this.fatigue * CONFIG.carry.slowMax;
+    if (this.pulling) s *= CONFIG.bigEgg.pullSpeedMul; // 큰 알 당기는 중
     if (this.hurry) s *= 1.3; // 동료 AI가 밀기를 도우러 달려올 때
     if (this.pushing) s = (this.pushing.pushSpeedTarget || s * CONFIG.bigEgg.pushSpeedMul) + 12; // 알 속도 + 약간(계속 붙어 있게)
     return s;

@@ -83,6 +83,10 @@ export const DEFAULT_CONFIG = {
     pushMaxSpeed: 170,     // 둘이 같이 밀 때 최대 속도
     pushAngle: 0.45,       // 알 쪽으로 향하는 정도(0~1) 이상이어야 밀림
     rollFriction: 0.05,    // 손을 떼면 굴러가다 멈추는 정도(작을수록 멀리 굴러감)
+    wallSlide: true,       // 벽 쪽으로 밀면 벽을 따라 미끄러짐(구석에 덜 박힘)
+    cornerEscape: 45,      // 구석(벽 2면)에 멈춰 있으면 트인 쪽으로 이 속도로 굴러 나옴(0이면 끔)
+    pullSpeedMul: 0.55,    // 큰 알 옆에서 E를 누르고 있으면 당기기 — 당기는 동안 몬스터 속도 배율
+    pullRange: 36,         // 당기기를 시작할 수 있는 거리(몸 가장자리 사이)
   },
 
   egg: {

@@ -90,6 +90,7 @@ export default class HudScene extends Phaser.Scene {
       if (m.downed) st = '쓰러짐';
       else if (m.stunned) st = '기절!';
       else if (m.extracting) st = '알 꺼내는 중';
+      else if (m.pulling) st = '큰 알 당기기';
       else if (m.pushing) st = '큰 알 밀기';
       else if (m.carrying) st = m.carrying.isStone ? '돌멩이' : m.carryMode === 'horn' ? '뿔에 알' : '알 들고';
       if (m.belly) st += (st ? ' + ' : '') + `삼킴 ${Math.ceil(CONFIG.kkuldduk.swallowLimit - m.bellyTime)}s`;

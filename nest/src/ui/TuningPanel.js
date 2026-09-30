@@ -17,6 +17,8 @@ const FIELDS = [
   ['bigEgg', 'pushSpeedMul', '큰 알 미는 속도 배율', 0.1, 1.5, 0.05],
   ['bigEgg', 'pushMaxSpeed', '큰 알 최대 굴림 속도', 50, 400, 10],
   ['bigEgg', 'rollFriction', '큰 알 구름 멈춤(작을수록 멀리)', 0.005, 0.3, 0.005],
+  ['bigEgg', 'cornerEscape', '구석에서 굴러 나오는 속도(0=끔)', 0, 150, 5],
+  ['bigEgg', 'pullSpeedMul', '큰 알 당길 때 속도 배율', 0.1, 1, 0.05],
   ['egg', 'rollFriction', '작은 알 구름 멈춤(작을수록 멀리)', 0.005, 0.3, 0.005],
   ['egg', 'bounce', '던진 알 튕김 정도', 0, 0.9, 0.05],
   ['둥지 · 타이밍 체크'],

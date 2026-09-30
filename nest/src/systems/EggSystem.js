@@ -67,8 +67,86 @@ export default class EggSystem {
       this.onPickup(egg, CONFIG.tension.pickupSmall);
       return;
     }
-    const big = this.nearestGroundEgg(m, (e) => e.big);
-    if (big) this.scene.fx.popText(big.x, big.y - 40, '큰 알은 뒤에서 밀어서 굴려요', { color: '#cfe6ff', size: 16 });
+    // 큰 알: E를 누르고 있는 동안 당기기(구석에 박힌 알을 빼낼 때)
+    const big = this.nearestGroundEgg(m, (e) => e.big && Phaser.Math.Distance.Between(m.x, m.y, e.x, e.y) <= m.radius + e.radius + CONFIG.bigEgg.pullRange);
+    if (big && !big.puller) {
+      m.pulling = big;
+      big.puller = m;
+      if (!big.pickedOnce) this.onPickup(big, CONFIG.tension.pickupBig);
+      this.scene.fx.popText(big.x, big.y - 40, '영차 당기기! (E를 떼면 놓음)', { color: '#cfe6ff', size: 16 });
+      Sfx.pickup();
+    }
+  }
+
+  stopPull(m) {
+    if (m.pulling) m.pulling.puller = null;
+    m.pulling = null;
+  }
+
+  // 당기기: 알이 몬스터 뒤를 줄에 묶인 것처럼 따라옴
+  updatePull(dt) {
+    for (const m of this.scene.monsters) {
+      const e = m.pulling;
+      if (!e) continue;
+      const held = m.controls && m.controls.isHeld('grab');
+      const far = Phaser.Math.Distance.Between(m.x, m.y, e.x, e.y) > m.radius + e.radius + CONFIG.bigEgg.pullRange + 40;
+      if (!held || m.stunned || e.broken || e.deposited || e.state !== 'ground' || far) { this.stopPull(m); continue; }
+      const dx = m.x - e.x, dy = m.y - e.y;
+      const d = Math.hypot(dx, dy) || 1;
+      const rope = m.radius + e.radius + 6;
+      const pull = Math.min(220, Math.max(0, d - rope) * 7);
+      e.setVelocityPx((dx / d) * pull, (dy / d) * pull);
+      this.scene.stats.pushTime = (this.scene.stats.pushTime || 0) + dt;
+    }
+  }
+
+  // 알 주변 벽 방향(벽 → 알 쪽을 향하는 단위 벡터)과 닿은 면 수
+  wallNormal(e, gap = 5) {
+    let nx = 0, ny = 0, hits = 0;
+    const r = e.radius + gap;
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      if (this.scene.isWallAt(e.x + Math.cos(a) * r, e.y + Math.sin(a) * r)) { nx -= Math.cos(a); ny -= Math.sin(a); hits++; }
+    }
+    const len = Math.hypot(nx, ny);
+    return { x: len ? nx / len : 0, y: len ? ny / len : 0, hits };
+  }
+
+  // 구석에 박혀 멈춘 큰 알은 트인 쪽으로 살짝 굴러 나옴(알 뒤로 몬스터가 들어갈 틈이 생길 때까지, 최대 2초)
+  updateCornerEscape(dt) {
+    const B = CONFIG.bigEgg;
+    if (!B.cornerEscape) return;
+    for (const e of this.list) {
+      if (!e.big || e.state !== 'ground' || e.puller) continue;
+      if (this.scene.monsters.some((m) => m.pushing === e)) { e.cornerT = 0; e.escapeT = 0; continue; }
+      const w = this.wallNormal(e, 40);
+      const stuck = w.hits >= 5;
+      if (!stuck) { e.cornerT = 0; e.escapeT = 0; continue; }
+      if (e.escapeT >= 2) continue; // 이번엔 포기(누군가 밀거나 당기면 초기화)
+      if (e.speedPx > 25 && !e.escaping) { e.cornerT = 0; continue; }
+      e.cornerT = (e.cornerT || 0) + dt;
+      if (e.cornerT < 0.4) continue;
+      if (!e.escapeDir || !e.escaping) e.escapeDir = this.openDirection(e);
+      e.escaping = true;
+      e.escapeT = (e.escapeT || 0) + dt;
+      e.setVelocityPx(e.escapeDir.x * B.cornerEscape, e.escapeDir.y * B.cornerEscape);
+    }
+    for (const e of this.list) if (e.escaping && (!e.cornerT || e.escapeT >= 2)) e.escaping = false;
+  }
+
+  // 16방향 중 벽까지 가장 멀리 트인 방향
+  openDirection(e) {
+    let best = { x: 0, y: 0 }, bd = -1;
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * Math.PI * 2;
+      const dx = Math.cos(a), dy = Math.sin(a);
+      let d = 0;
+      while (d < 120 && !this.scene.isWallAt(e.x + dx * (e.radius + d), e.y + dy * (e.radius + d))
+        && !this.scene.isWallAt(e.x + dx * d - dy * e.radius * 0.8, e.y + dy * d + dx * e.radius * 0.8)
+        && !this.scene.isWallAt(e.x + dx * d + dy * e.radius * 0.8, e.y + dy * d - dx * e.radius * 0.8)) d += 6;
+      if (d > bd) { bd = d; best = { x: dx, y: dy }; }
+    }
+    return best;
   }
 
   onPickup(egg, tension) {
@@ -213,7 +291,7 @@ export default class EggSystem {
       if (!e.big || e.state !== 'ground') continue;
       let vx = 0, vy = 0, n = 0;
       for (const m of this.scene.monsters) {
-        if (m.stunned || (m.carrying && !m.carrying.isStone) || m.extracting) continue; // 돌은 들고도 밀 수 있음
+        if (m.stunned || (m.carrying && !m.carrying.isStone) || m.extracting || m.pulling) continue; // 돌은 들고도 밀 수 있음
         const dx = e.x - m.x, dy = e.y - m.y;
         const d = Math.hypot(dx, dy);
         if (d > m.radius + e.radius + 8) continue;
@@ -229,6 +307,17 @@ export default class EggSystem {
         m.pushing = e;
       }
       if (!n) continue;
+      // 벽 따라 미끄러지기: 벽을 향하는 성분을 빼서 벽을 타고 옆으로 굴러가게
+      if (B.wallSlide) {
+        const w = this.wallNormal(e);
+        const into = vx * w.x + vy * w.y;
+        if (w.hits && into < 0) {
+          const before = Math.hypot(vx, vy);
+          vx -= into * w.x; vy -= into * w.y;
+          const after = Math.hypot(vx, vy);
+          if (after > 1) { const keep = Math.max(after, before * 0.6) / after; vx *= keep; vy *= keep; }
+        }
+      }
       const len = Math.hypot(vx, vy);
       const cap = n > 1 ? B.pushMaxSpeed : Math.min(len, B.pushMaxSpeed);
       if (len > cap) { vx = (vx / len) * cap; vy = (vy / len) * cap; }
@@ -250,6 +339,7 @@ export default class EggSystem {
 
   dropAllOnHit(m) {
     if (m.extracting) m.extracting.cancel(null);
+    this.stopPull(m);
     if (m.carrying) {
       const egg = this.releaseCarry(m);
       if (egg) {
@@ -331,6 +421,8 @@ export default class EggSystem {
   update(dt) {
     const C = CONFIG.carry;
     this.updatePush(dt);
+    this.updatePull(dt);
+    this.updateCornerEscape(dt);
     for (const m of this.scene.monsters) {
       // 피로도: 알(돌멩이 제외)을 들고 있으면 쌓이고, 내려놓으면 회복
       const heavy = m.carrying && !m.carrying.isStone;
