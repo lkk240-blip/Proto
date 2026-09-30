@@ -213,6 +213,7 @@ export const DEFAULT_CONFIG = {
     stoneRange: 260,       // 돌을 든 동료가 이 거리 안의 깨어 있는 괴수에게 던짐
     stoneCooldown: 1.2,    // 동료 돌 던지기 최소 간격(초)
     pushAssist: true,      // 내가 큰 알을 밀면 동료가 같은 방향 뒤에서 같이 밀기
+    stonePickRange: 130,   // 동료가 멈춰 있을 때(기다려 / 내 옆에 서 있음) 이 거리 안의 돌은 직접 주워 듦
     trailSpacing: 10,      // 발자국 기록 간격
     stopDistance: 70,      // 조작 몬스터와 이 거리 안이면 멈춤
     teleportDelay: 3,      // 이 시간 이상 멀어져 있으면(화면 밖일 때) 순간이동

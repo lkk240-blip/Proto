@@ -29,6 +29,7 @@ export default class Companion {
 
   toggleMode() {
     this.mode = this.mode === 'follow' ? 'wait' : 'follow';
+    this.post = null; // 기다릴 자리(다음 think 에서 현재 위치로 정함)
     this.targetIdx = -1;
     this.farTimer = 0;
     return this.mode;
@@ -70,7 +71,15 @@ export default class Companion {
     // 1) 손에 든 것 처리(기다려 상태에서도 함): 돌 던지기, 알 패스, 지치면 내려놓기
     this.actCd = Math.max(0, (this.actCd || 0) - dt);
     if (this.actCd <= 0 && this.handleHeld(self, leader)) return;
-    if (this.mode === 'wait') { this.farTimer = 0; return; }
+    if (this.mode === 'wait') {
+      this.farTimer = 0;
+      if (!this.post) this.post = { x: self.x, y: self.y };
+      // 기다리는 동안 근처 돌은 주워 두고, 다시 제자리로
+      if (this.seekStone(self, this.post)) return;
+      this.walkTo(self, this.post, 10);
+      return;
+    }
+    this.post = null;
 
     // 2) 내가 큰 알을 밀고 있으면 같은 방향 뒤에서 같이 밀기
     if (C.pushAssist && this.assistPush(dt, self, leader)) return;
@@ -86,7 +95,10 @@ export default class Companion {
       return;
     }
 
-    if (d < C.stopDistance && directOk) return; // 충분히 가까우면 멈춤
+    if (d < C.stopDistance && directOk) { // 충분히 가까우면 멈춤 — 멈춰 있는 동안 근처 돌 줍기
+      this.seekStone(self, self);
+      return;
+    }
 
     let target = null;
     if (directOk) {
@@ -164,6 +176,36 @@ export default class Companion {
       return true;
     }
     return false;
+  }
+
+  // 멈춰 있을 때: center 에서 stonePickRange 안의 바닥 돌을 주우러 감. 움직이는 중이면 true
+  seekStone(self, center) {
+    if (self.carrying || self.extracting) return false;
+    const eggs = this.scene.eggs;
+    const map = this.scene.map;
+    const R = CONFIG.companion.stonePickRange;
+    let best = null, bd = Infinity;
+    for (const e of eggs.list) {
+      if (!e.isStone || e.state !== 'ground') continue;
+      if (Phaser.Math.Distance.Between(center.x, center.y, e.x, e.y) > R) continue;
+      const d = Phaser.Math.Distance.Between(self.x, self.y, e.x, e.y);
+      if (d < bd && hasClearPath(map, self.x, self.y, e.x, e.y, self.radius * 0.8)) { best = e; bd = d; }
+    }
+    if (!best) return false;
+    if (bd <= eggs.reach(self, best) - 4) {
+      eggs.attachCarry(self, best);
+      this.scene.fx.popText(self.x, self.y - self.radius - 26, '돌 하나 챙겼어', { color: '#d0d4da', size: 15 });
+      return false;
+    }
+    this.walkTo(self, best, 0);
+    self.statusText = this.mode === 'wait' ? '대기 (돌 줍는 중)' : '돌 줍는 중';
+    return true;
+  }
+
+  walkTo(self, p, stopAt) {
+    const dx = p.x - self.x, dy = p.y - self.y;
+    const d = Math.hypot(dx, dy);
+    if (d > stopAt && d > 1) this.move = { x: dx / d, y: dy / d };
   }
 
   findThreat(self, range) {
