@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { CONFIG } from '../config.js';
-import { hasClearPath, isFreeSpot } from './Los.js';
+import { hasClearPath, hasLineOfSight, isFreeSpot } from './Los.js';
 
 // 1인 모드 동료 AI. "단순함이 최우선" — 길찾기 대신 조작 몬스터의 발자국(궤적)을 따라간다.
 //   follow(따라와): 궤적 중 "지금 직선으로 갈 수 있는 가장 앞쪽 점"을 향해 걷는다. 가까우면 멈춤.
@@ -65,7 +65,15 @@ export default class Companion {
     const C = CONFIG.companion;
     this.move = { x: 0, y: 0 };
     self.statusText = this.mode === 'wait' ? '대기' : '';
-    if (self.stunned || self.coop || this.mode === 'wait' || !leader) { this.farTimer = 0; return; }
+    if (self.stunned || !leader) { this.farTimer = 0; return; }
+
+    // 1) 손에 든 것 처리(기다려 상태에서도 함): 돌 던지기, 알 패스, 지치면 내려놓기
+    this.actCd = Math.max(0, (this.actCd || 0) - dt);
+    if (this.actCd <= 0 && this.handleHeld(self, leader)) return;
+    if (this.mode === 'wait') { this.farTimer = 0; return; }
+
+    // 2) 내가 큰 알을 밀고 있으면 같은 방향 뒤에서 같이 밀기
+    if (C.pushAssist && this.assistPush(dt, self, leader)) return;
 
     const map = this.scene.map;
     const d = Phaser.Math.Distance.Between(self.x, self.y, leader.x, leader.y);
@@ -115,6 +123,106 @@ export default class Companion {
     const dx = target.x - self.x, dy = target.y - self.y;
     const len = Math.hypot(dx, dy);
     if (len > 1) this.move = { x: dx / len, y: dy / len };
+  }
+
+  // 손에 든 것 처리. 행동했으면 true
+  handleHeld(self, leader) {
+    const C = CONFIG.companion;
+    const held = self.carrying;
+    if (!held) return false;
+    const eggs = this.scene.eggs;
+    const map = this.scene.map;
+    if (held.isStone) {
+      // 깨어서 움직이는(의심·추격·수색) 괴수가 사거리 안에 보이면 던짐
+      const threat = this.findThreat(self, C.stoneRange);
+      if (!threat) return false;
+      const t = 0.45; // 날아가는 동안 움직일 만큼 앞을 보고 조준
+      const v = threat.body.velocity;
+      const aim = { x: threat.x + v.x * 60 * t, y: threat.y + v.y * 60 * t };
+      eggs.throwEgg(self, aim, 50, true); // 괴수 조준 돌은 내가 중간에 받아 버리지 않게
+      this.actCd = C.stoneCooldown;
+      this.scene.fx.popText(self.x, self.y - self.radius - 26, '이거나 먹어라!', { color: '#ffd166', size: 16 });
+      return true;
+    }
+    // 알: 무거워지기 전에 나에게 패스
+    if (self.fatigue >= C.passFatigue) {
+      const d = Phaser.Math.Distance.Between(self.x, self.y, leader.x, leader.y);
+      const free = !leader.stunned && !leader.carrying && !leader.extracting;
+      if (free && d <= C.passRange && d > 40 && hasClearPath(map, self.x, self.y, leader.x, leader.y, 12)) {
+        const lv = leader.body.velocity;
+        eggs.throwEgg(self, { x: leader.x + lv.x * 60 * 0.4, y: leader.y + lv.y * 60 * 0.4 }, 40);
+        this.actCd = 1;
+        this.scene.fx.popText(self.x, self.y - self.radius - 26, '받아!', { color: '#9fe8ff', size: 18 });
+        this.scene.stats.aiPasses = (this.scene.stats.aiPasses || 0) + 1;
+        return true;
+      }
+    }
+    if (self.fatigue >= C.putDownFatigue) {
+      eggs.putDown(self);
+      this.actCd = 1;
+      this.scene.fx.popText(self.x, self.y - self.radius - 26, '잠깐 쉴게…', { color: '#cccccc', size: 15 });
+      return true;
+    }
+    return false;
+  }
+
+  findThreat(self, range) {
+    const map = this.scene.map;
+    const list = [];
+    for (const g of this.scene.guards) {
+      if (g.hidden || !['suspect', 'chase', 'search'].includes(g.state)) continue;
+      list.push(g);
+    }
+    const b = this.scene.chaser;
+    if (b && !b.hidden && (b.mode === 'stalk' || b.mode === 'hunt') && b.stunTimer <= 0) list.push(b);
+    let best = null, bd = Infinity;
+    for (const en of list) {
+      const d = Phaser.Math.Distance.Between(self.x, self.y, en.x, en.y);
+      if (d > range + en.radius || d >= bd) continue;
+      if (!hasLineOfSight(map, self.x, self.y, en.x, en.y)) continue;
+      best = en; bd = d;
+    }
+    return best;
+  }
+
+  // 조작 몬스터가 큰 알을 밀면: 같은 방향으로, 알 뒤쪽(조작 몬스터 옆)에 붙어서 같이 밈. 도왔으면 true
+  assistPush(dt, self, leader) {
+    const e = leader.pushing;
+    if (e) { this.assistEgg = e; this.assistT = 0.6; }
+    else this.assistT = Math.max(0, (this.assistT || 0) - dt);
+    const egg = this.assistEgg;
+    if (!egg || this.assistT <= 0 || egg.broken || egg.deposited || self.carrying) return false;
+    const lm = leader.controls ? leader.controls.getMove() : { x: 0, y: 0 };
+    let dir = { x: lm.x, y: lm.y };
+    let len = Math.hypot(dir.x, dir.y);
+    if (len < 0.3) {
+      const v = egg.body.velocity;
+      dir = { x: v.x, y: v.y };
+      len = Math.hypot(dir.x, dir.y);
+      if (len < 0.2) return false;
+    }
+    dir.x /= len; dir.y /= len;
+    const perp = { x: -dir.y, y: dir.x };
+    // 조작 몬스터 반대편 옆자리를 골라 나란히 밀기
+    const side = ((leader.x - egg.x) * perp.x + (leader.y - egg.y) * perp.y) > 0 ? -1 : 1;
+    const back = egg.radius + self.radius + 2;
+    const spot = { x: egg.x - dir.x * back + perp.x * side * egg.radius * 0.6, y: egg.y - dir.y * back + perp.y * side * egg.radius * 0.6 };
+    const ahead = (self.x - egg.x) * dir.x + (self.y - egg.y) * dir.y > 0;
+    let target = spot;
+    if (ahead) {
+      // 알 앞쪽에 있으면 옆으로 돌아서 뒤로
+      target = { x: egg.x + perp.x * side * (egg.radius + self.radius + 12), y: egg.y + perp.y * side * (egg.radius + self.radius + 12) };
+    }
+    const dx = target.x - self.x, dy = target.y - self.y;
+    const d = Math.hypot(dx, dy);
+    if (!ahead && d < 14) {
+      this.move = { x: dir.x, y: dir.y }; // 제자리에 붙었으면 같이 밀기
+    } else if (d > 1) {
+      if (d > 300 || !hasClearPath(this.scene.map, self.x, self.y, target.x, target.y, self.radius * 0.8)) return false; // 멀거나 막혀 있으면 평소처럼 따라감
+      this.move = { x: dx / d, y: dy / d };
+    }
+    self.statusText = '같이 밀자!';
+    return true;
   }
 
   // 궤적에서 직선으로 갈 수 있는 가장 앞쪽(최근) 점

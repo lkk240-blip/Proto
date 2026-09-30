@@ -13,7 +13,9 @@ export default class Chaser {
     this.scene = scene;
     this.radius = CONFIG.chaser.radius;
     this.lair = { x, y };
-    this.body = scene.matter.add.circle(x, y, this.radius, {
+    // 충돌용 몸통은 보이는 크기보다 작게(덩치 때문에 바위·모서리에 끼지 않도록). 잡기 판정은 보이는 크기 기준.
+    this.bodyR = this.radius * 0.7;
+    this.body = scene.matter.add.circle(x, y, this.bodyR, {
       friction: 0, frictionStatic: 0, frictionAir: 0, inertia: Infinity, label: 'chaser',
       collisionFilter: { category: CAT.GUARD, mask: MASK.GUARD, group: 0 },
     });
@@ -27,6 +29,12 @@ export default class Chaser {
     this.gloat = 0;
     this.stunTimer = 0;
     this.lurking = false;
+    this.lurkTime = 0;          // 이번 매복이 이어진 시간
+    this.lurkCd = 0;            // 매복 재사용 대기
+    this.stuckT = 0;            // 끼임 감지
+    this.lastPos = { x, y };
+    this.unstick = 0;           // 끼임 탈출 중 남은 시간
+    this.unstickDir = { x: 0, y: 0 };
     this.gone = false;          // (구버전 호환) 사라지지 않음
     this.angle = Math.PI;
 
@@ -155,11 +163,30 @@ export default class Chaser {
 
   moveTo(target, speed, dt) {
     const setV = (vx, vy) => this.scene.matter.body.setVelocity(this.body, { x: vx / 60, y: vy / 60 });
+    // 끼임 탈출: 1초 동안 거의 못 움직였으면 옆으로 잠깐 비켜 갔다가 경로 재계산
+    if (this.unstick > 0) {
+      this.unstick -= dt;
+      setV(this.unstickDir.x * speed, this.unstickDir.y * speed);
+      return;
+    }
+    this.stuckT += dt;
+    if (this.stuckT >= 1) {
+      const moved = Phaser.Math.Distance.Between(this.x, this.y, this.lastPos.x, this.lastPos.y);
+      this.lastPos = { x: this.x, y: this.y };
+      this.stuckT = 0;
+      if (moved < 10 && Phaser.Math.Distance.Between(this.x, this.y, target.x, target.y) > this.radius + 30) {
+        const a = Math.atan2(target.y - this.y, target.x - this.x) + (Math.random() < 0.5 ? 1 : -1) * Phaser.Math.FloatBetween(1.2, 2.2);
+        this.unstickDir = { x: Math.cos(a), y: Math.sin(a) };
+        this.unstick = 0.45;
+        this.path = null;
+        return;
+      }
+    }
     let next = target;
-    if (!hasClearPath(this.scene.map, this.x, this.y, target.x, target.y, this.radius)) {
+    if (!hasClearPath(this.scene.map, this.x, this.y, target.x, target.y, this.bodyR)) {
       this.repath -= dt;
       if (!this.path || this.repath <= 0) {
-        this.path = this.scene.pathfinder.find(this.x, this.y, target.x, target.y, this.radius);
+        this.path = this.scene.pathfinder.find(this.x, this.y, target.x, target.y, this.bodyR);
         this.repath = 0.35;
       }
       if (this.path && this.path.length) {
@@ -223,7 +250,16 @@ export default class Chaser {
           Sfx.alert();
         }
       }
-      this.lurking = this.mode === 'stalk' && this.inBush && hunting && dist <= C.lurkRange;
+      // 매복: 수풀 속 + 알 가진 몬스터가 근처. 단, 최대 lurkMax 초만 기다리고 풀면 한동안 다시 매복하지 않음
+      this.lurkCd = Math.max(0, this.lurkCd - dt);
+      const canLurk = this.mode === 'stalk' && this.inBush && hunting && dist <= C.lurkRange && this.lurkCd <= 0;
+      if (canLurk) {
+        this.lurkTime += dt;
+        if (this.lurkTime >= C.lurkMax) { this.lurkCd = C.lurkCooldown; this.lurkTime = 0; }
+      } else {
+        this.lurkTime = 0;
+      }
+      this.lurking = canLurk && this.lurkCd <= 0;
       if (this.gloat > 0 || this.stunTimer > 0 || !m || this.lurking) {
         stop();
         if (this.lurking && m) this.angle = Phaser.Math.Angle.RotateTo(this.angle, Math.atan2(m.y - this.y, m.x - this.x), 3 * dt);

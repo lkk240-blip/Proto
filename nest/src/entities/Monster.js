@@ -41,7 +41,7 @@ export default class Monster {
 
     this.stunTimer = 0;
     this.graceTimer = 0;
-    this.hp = CONFIG.monster.maxHp;
+    this.hp = this.maxHp;
     this.downed = false;        // 체력 0: 쓰러짐(동료가 부활시켜야 함)
     this.reviveProgress = 0;    // 0~1, 동료가 부활시키는 중
     this.statusText = '';       // 머리 위 상태 표시(예: "대기")
@@ -50,6 +50,7 @@ export default class Monster {
     this.buildVisual();
   }
 
+  get maxHp() { return this.type.maxHp ?? CONFIG.monster.maxHp; }
   get x() { return this.body.position.x; }
   get y() { return this.body.position.y; }
   // 쓰러진 것도 "행동 불가"로 취급(잡히지 않음, 조작·줍기 불가)
@@ -128,7 +129,7 @@ export default class Monster {
   drawHp() {
     const g = this.hpG;
     g.clear();
-    const n = CONFIG.monster.maxHp, w = 9, gap = 3;
+    const n = this.maxHp, w = 9, gap = 3;
     const x0 = -(n * w + (n - 1) * gap) / 2, y = this.radius + 8;
     for (let i = 0; i < n; i++) {
       g.fillStyle(0x000000, 0.6).fillRect(x0 + i * (w + gap) - 1, y - 1, w + 2, 7);

@@ -94,7 +94,7 @@ export default class HudScene extends Phaser.Scene {
       else if (m.carrying) st = m.carrying.isStone ? '돌멩이' : m.carryMode === 'horn' ? '뿔에 알' : '알 들고';
       if (m.belly) st += (st ? ' + ' : '') + `삼킴 ${Math.ceil(CONFIG.kkuldduk.swallowLimit - m.bellyTime)}s`;
       const who = gs.mode === 'duo' ? `${m.tag} ` : (m.controlled ? '▶ ' : '   ');
-      const hp = '♥'.repeat(m.hp) + '♡'.repeat(Math.max(0, CONFIG.monster.maxHp - m.hp));
+      const hp = '♥'.repeat(m.hp) + '♡'.repeat(Math.max(0, m.maxHp - m.hp));
       return `${who}${m.type.name}  ${hp}  ${dash}${st ? '  [' + st + ']' : ''}`;
     });
     if (gs.mode === 'solo') lines.push(`동료: ${gs.companion.mode === 'wait' ? '기다려' : '따라와'}`);

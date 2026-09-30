@@ -29,7 +29,7 @@ export const DEFAULT_CONFIG = {
     stunTime: 3,           // 경비에게 잡혔을 때 기절 시간
     knockbackSpeed: 750,   // 잡혔을 때 튕겨 나가는 속도
     graceTime: 1.5,        // 기절에서 깬 뒤 다시 잡히지 않는 시간
-    maxHp: 3,              // 체력(칸)
+    maxHp: 3,              // 기본 체력(칸) — 종류별 maxHp 가 있으면 그 값을 씀
     guardDamage: 1,        // 괴수에게 잡히면 깎이는 체력
     bossDamage: 2,         // 우두머리 괴수에게 잡히면 깎이는 체력
     reviveTime: 2.5,       // 쓰러진 동료 옆에서 E를 누르고 있어야 하는 시간
@@ -39,8 +39,9 @@ export const DEFAULT_CONFIG = {
 
   // 몬스터 종류별 특성. speedMul 은 baseSpeed 에 곱하는 배율.
   monsterTypes: {
-    kkuldduk: { name: '꿀떡이', color: 0x8b5a2b, radiusMul: 1.25, speedMul: 0.9 },
-    kkaburi: { name: '까부리', color: 0xf2f2f2, radiusMul: 0.85, speedMul: 1.1 },
+    // maxHp: 종류별 체력(칸). 꿀떡이는 느린 대신 튼튼함
+    kkuldduk: { name: '꿀떡이', color: 0x8b5a2b, radiusMul: 1.25, speedMul: 0.9, maxHp: 5 },
+    kkaburi: { name: '까부리', color: 0xf2f2f2, radiusMul: 0.85, speedMul: 1.1, maxHp: 3 },
   },
 
   // 기능 켜기/끄기
@@ -193,6 +194,8 @@ export const DEFAULT_CONFIG = {
     awareRate: 30,         // 보이는 몬스터 1마리당 초당 발견 게이지 상승(가까울수록 최대 2배)
     awareDecay: 10,        // 아무도 안 보이면 초당 감소
     lurkRange: 380,        // 수풀 속에서 알 가진 몬스터가 이 거리 안이면 멈춰서 매복
+    lurkMax: 5,            // 한 번 매복하면 최대 이 시간(초)만 기다리고 다시 움직임
+    lurkCooldown: 8,       // 매복을 풀고 나서 다시 매복할 수 있기까지(초)
     duration: 60,          // 깨어 있는 시간 — 끝나면 잠자리로 돌아가 다시 잔다
     radius: 40,
   },
@@ -204,6 +207,12 @@ export const DEFAULT_CONFIG = {
   },
 
   companion: {
+    passFatigue: 0.6,      // 동료가 알을 들고 이 피로도가 되면 나에게 던져서 패스
+    passRange: 280,        // 패스할 수 있는 최대 거리
+    putDownFatigue: 0.92,  // 패스 못 하면 이 피로도에서 살며시 내려놓음(떨어뜨림 소음 방지)
+    stoneRange: 260,       // 돌을 든 동료가 이 거리 안의 깨어 있는 괴수에게 던짐
+    stoneCooldown: 1.2,    // 동료 돌 던지기 최소 간격(초)
+    pushAssist: true,      // 내가 큰 알을 밀면 동료가 같은 방향 뒤에서 같이 밀기
     trailSpacing: 10,      // 발자국 기록 간격
     stopDistance: 70,      // 조작 몬스터와 이 거리 안이면 멈춤
     teleportDelay: 3,      // 이 시간 이상 멀어져 있으면(화면 밖일 때) 순간이동

@@ -125,14 +125,25 @@ export default class EggSystem {
     return { x: m.x, y: m.y };
   }
 
-  throwEgg(m) {
+  // aim 이 주어지면 그 지점(바닥 기준 높이 aimZ)에 도착하도록 방향·세기를 맞춰 던짐(동료 AI 패스/조준용)
+  throwEgg(m, aim = null, aimZ = 40, noCatch = false) {
     const egg = m.carrying;
     if (!egg) return;
     const E = CONFIG.egg;
+    const z0 = m.carryMode === 'horn' ? 8 : m.radius + 10;
+    let speed = E.throwSpeed;
+    if (aim) {
+      const dx = aim.x - m.x, dy = aim.y - m.y;
+      const d = Math.hypot(dx, dy) || 1;
+      m.facing.set(dx / d, dy / d);
+      const g = E.throwGravity, vz = E.throwUpSpeed;
+      const t = (vz + Math.sqrt(Math.max(0, vz * vz + 2 * g * (z0 - aimZ)))) / g; // aimZ 높이까지 내려오는 시간
+      speed = Phaser.Math.Clamp(d / t, 80, E.throwSpeed * 1.5);
+    }
     m.carrying = null;
     const start = { x: m.x + m.facing.x * (m.radius * 0.6), y: m.y + m.facing.y * (m.radius * 0.6) };
     egg.moveTo(start.x, start.y);
-    egg.launch(m.facing.x * E.throwSpeed, m.facing.y * E.throwSpeed, E.throwUpSpeed, m.carryMode === 'horn' ? 8 : m.radius + 10, m);
+    egg.launch(m.facing.x * speed, m.facing.y * speed, E.throwUpSpeed, z0, m, noCatch);
     Sfx.throw();
     this.scene.stats.throws++;
   }
