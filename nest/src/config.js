@@ -12,9 +12,9 @@ export const DEFAULT_CONFIG = {
   camera: {
     followLerp: 0.12,      // 0~1, 클수록 카메라가 빨리 따라붙음
     switchPanMs: 250,      // 몬스터 교체 시 카메라 이동 시간(ms)
-    soloZoom: 0.85,        // 1인 모드 카메라 줌(작을수록 넓게 보임)
-    duoMinZoom: 0.55,      // 2인 모드: 가장 멀리 뺐을 때 줌
-    duoMaxZoom: 0.9,       // 2인 모드: 가장 가까이 당겼을 때 줌
+    soloZoom: 1.25,        // 1인 모드 카메라 줌(클수록 가까이 = 보이는 범위가 좁음)
+    duoMinZoom: 0.75,      // 2인 모드: 가장 멀리 뺐을 때 줌
+    duoMaxZoom: 1.2,       // 2인 모드: 가장 가까이 당겼을 때 줌
     duoPadding: 260,       // 2인 모드: 두 몬스터 주변 여백
   },
 
@@ -48,11 +48,43 @@ export const DEFAULT_CONFIG = {
     uniqueSkills: false,   // 캐릭터 고유 스킬(꿀떡이 삼키기, 까부리 뿔 운반). 끄면 둘 다 일반 운반만 함
   },
 
+  // 알 둥지(맵에 하나). E로 꺼내기 시작 → 게이지가 차면 알이 하나씩 바닥으로 튀어나옴
+  nest: {
+    smallCount: 6,         // 둥지 안 작은 알 수
+    bigCount: 2,           // 둥지 안 큰 알 수
+    radius: 44,            // 둥지 크기(이 안에 들어가서 E)
+    extractTime: 3,        // 알 하나 꺼내는 데 걸리는 시간(초)
+    checksMin: 1,          // 알 하나 꺼낼 때 타이밍 체크 최소 횟수
+    checksMax: 2,          // 최대 횟수
+    popSpeed: 170,         // 꺼낸 알이 튀어나가는 속도
+  },
+
+  // 타이밍 체크(데드 바이 데이라이트 발전기 체크 방식): 바늘이 표시 구간에 있을 때 E
+  skillCheck: {
+    duration: 1.1,         // 바늘이 한 바퀴 도는 시간(초) — 안 누르고 지나가면 실패
+    zoneDeg: 55,           // 성공 구간 크기(도)
+    greatDeg: 14,          // 대성공 구간(성공 구간 앞쪽 끝) 크기(도)
+    greatBonus: 0.15,      // 대성공 시 진행도 보너스
+    failPenalty: 0.25,     // 실패 시 진행도 감소
+    failNoise: 260,        // 실패 시 소음 크기(자는 우두머리가 깰 수 있음)
+  },
+
+  // 알을 오래 들고 있으면 점점 느려지다가 떨어뜨림(피로도 0~1)
+  carry: {
+    fatigueTime: 10,       // 들고 있을 때 피로도가 0→1이 되는 시간(초) — 1이면 떨어뜨림
+    recoverTime: 4,        // 내려놓았을 때 1→0으로 회복되는 시간(초)
+    slowMax: 0.5,          // 피로도 1일 때 추가 감속(0.5 = 절반 속도)
+  },
+
+  // 큰 알: 들지 않고 뒤에서 밀어서 굴림
+  bigEgg: {
+    pushSpeedMul: 0.7,     // 미는 몬스터 속도 대비 알이 굴러가는 속도(미는 동안 몬스터도 이 배율로 느려짐)
+    pushMaxSpeed: 170,     // 둘이 같이 밀 때 최대 속도
+    pushAngle: 0.45,       // 알 쪽으로 향하는 정도(0~1) 이상이어야 밀림
+    rollFriction: 0.05,    // 손을 떼면 굴러가다 멈추는 정도(작을수록 멀리 굴러감)
+  },
+
   egg: {
-    smallMin: 4,           // 작은 알 개수 최소
-    smallMax: 5,           // 작은 알 개수 최대
-    bigMin: 1,             // 큰 알 개수 최소
-    bigMax: 2,             // 큰 알 개수 최대
     smallValue: 1,
     bigValue: 3,
     crackValueLoss: 0.25,  // 금 1단계당 가치 감소 비율
@@ -68,6 +100,10 @@ export const DEFAULT_CONFIG = {
     landCrackSpeed: 300,   // 착지할 때 낙하 속도가 이 이상이면 금 1단계
     catchRadius: 26,       // 몸 가장자리에서 이 거리 안이면 공중의 알을 받음
     catchMaxHeight: 60,    // 이 높이 아래로 내려온 알만 받을 수 있음
+    bounce: 0.45,          // 던진 알이 바닥에 튕길 때 남는 높이 속도 비율
+    bounceMinSpeed: 90,    // 이보다 약하게 떨어지면 더 안 튀고 구르기 시작
+    rollFriction: 0.025,   // 작은 알이 구를 때 멈추는 정도(작을수록 멀리 굴러감)
+    wallBounce: 0.55,      // 벽에 튕길 때 남는 속도 비율
     crackOnEnemyHit: true, // 던진 알이 괴수에 맞으면 알도 금 1단계(기절시키는 대가)
   },
 
@@ -87,16 +123,6 @@ export const DEFAULT_CONFIG = {
     hitHeight: 90,         // 이 높이 아래로 날아가는 물건만 괴수에 맞음(괴수가 크니까 넉넉히)
     hitNoise: 110,         // 명중 소리 크기(주변 괴수가 들을 수 있음)
     angerSuspicion: 80,    // 기절에서 깬 괴수의 의심(던진 곳으로 찾아옴)
-  },
-
-  bigEgg: {
-    coopRadius: 90,        // 큰 알 중심에서 이 거리 안에 두 마리가 있으면 공동 운반 가능
-    coopSlow: 0.3,         // 공동 운반 감속(기본 속도 대비)
-    coopAccel: 0.05,       // 공동 운반 가속(작을수록 관성 큼)
-    coopTurnRate: 1.2,     // 공동 운반 덩어리 회전 속도(라디안/초)
-    dragSlow: 0.65,        // 질질 끌기 감속
-    dragNoiseInterval: 0.5,// 질질 끌기 소음 간격
-    dragNoise: 90,         // 질질 끌기 소음 크기
   },
 
   kkuldduk: {
@@ -147,21 +173,27 @@ export const DEFAULT_CONFIG = {
   },
 
   tension: {
-    pickupSmall: 8,        // 작은 알 줍기
-    pickupBig: 15,         // 큰 알 들기/끌기
+    pickupSmall: 8,        // 작은 알 처음 줍기
+    pickupBig: 15,         // 큰 알 처음 밀기
     chaseStart: 10,        // 경비 추격 시작
     noiseMul: 0.02,        // 소음 크기 × 이 값
     eggBreak: 10,          // 알 깨짐
   },
 
+  // 우두머리 괴수: 둥지 옆(맵 글자 K)에서 잔다. 소음·접촉·소란도 100으로 깨어나 일정 시간 사냥 후 다시 잔다.
   chaser: {
-    speed: 215,            // 추격자(우두머리 괴수) 돌진 속도(발견 후)
+    wakeThreshold: 100,    // 깸 게이지가 이만큼 차면 깬다
+    sleepHearingMul: 0.3,  // 잘 때 들은 소음 크기 × 이 값만큼 깸 게이지 상승
+    wakeDecay: 3,          // 조용하면 초당 깸 게이지 감소
+    hearingRadius: 60,     // 소음 파동이 몸(+이 거리)에 닿으면 들음
+    groggyTime: 1.5,       // 깨어나서 포효하는 시간
+    speed: 215,            // 돌진 속도(발견 후)
     stalkSpeed: 110,       // 발견 전: 알 냄새를 따라 슬금슬금 다가오는 속도
     sightRange: 320,       // 발견 게이지가 오르는 거리(벽에 가리면 안 오름)
     awareRate: 30,         // 보이는 몬스터 1마리당 초당 발견 게이지 상승(가까울수록 최대 2배)
     awareDecay: 10,        // 아무도 안 보이면 초당 감소
     lurkRange: 380,        // 수풀 속에서 알 가진 몬스터가 이 거리 안이면 멈춰서 매복
-    duration: 60,          // 등장 후 퇴장까지
+    duration: 60,          // 깨어 있는 시간 — 끝나면 잠자리로 돌아가 다시 잔다
     radius: 40,
   },
 

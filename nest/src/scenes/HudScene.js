@@ -77,9 +77,10 @@ export default class HudScene extends Phaser.Scene {
     const col = Phaser.Display.Color.Interpolate.ColorWithColor(
       Phaser.Display.Color.ValueToColor(0xffc16b), Phaser.Display.Color.ValueToColor(0xff2d2d), 100, t * 100);
     g.fillStyle(Phaser.Display.Color.GetColor(col.r, col.g, col.b), 1).fillRect(tx, ty, tw * t, 12);
-    if (gs.chaser && !gs.chaser.gone) this.tensionText.setText(`우두머리 괴수 출현! 떠나기까지 ${Math.ceil(gs.chaser.remaining)}초`).setColor('#ff5d5d');
-    else if (gs.stats.chaser) this.tensionText.setText('우두머리 괴수가 떠났다').setColor('#aaaaaa');
-    else this.tensionText.setText(`${gs.tension.toFixed(0)} / 100  (100이 되면 우두머리 괴수 등장)`).setColor('#ffffff');
+    const boss = gs.chaser;
+    if (boss.mode === 'stalk' || boss.mode === 'hunt' || boss.mode === 'waking') this.tensionText.setText(`우두머리 괴수가 깨어 있다! 다시 잠들기까지 ${Math.ceil(boss.remaining)}초`).setColor('#ff5d5d');
+    else if (boss.mode === 'return') this.tensionText.setText('우두머리 괴수가 잠자리로 돌아가는 중').setColor('#ffb3b3');
+    else this.tensionText.setText(`${gs.tension.toFixed(0)} / 100  (100이 되면 우두머리 괴수가 깸)`).setColor('#ffffff');
     this.tensionText.y = ty + 16;
 
     // --- 몬스터 상태 ---
@@ -88,8 +89,8 @@ export default class HudScene extends Phaser.Scene {
       let st = '';
       if (m.downed) st = '쓰러짐';
       else if (m.stunned) st = '기절!';
-      else if (m.coop) st = '공동 운반';
-      else if (m.dragging) st = '질질 끌기';
+      else if (m.extracting) st = '알 꺼내는 중';
+      else if (m.pushing) st = '큰 알 밀기';
       else if (m.carrying) st = m.carrying.isStone ? '돌멩이' : m.carryMode === 'horn' ? '뿔에 알' : '알 들고';
       if (m.belly) st += (st ? ' + ' : '') + `삼킴 ${Math.ceil(CONFIG.kkuldduk.swallowLimit - m.bellyTime)}s`;
       const who = gs.mode === 'duo' ? `${m.tag} ` : (m.controlled ? '▶ ' : '   ');
@@ -102,7 +103,7 @@ export default class HudScene extends Phaser.Scene {
     // --- 조작 힌트 ---
     this.hint.setText(gs.mode === 'duo'
       ? 'P1: WASD 이동 · Space 대시 · E 줍기/부활 · R 던지기      P2: 방향키 · 오른Ctrl 대시 · Enter 줍기/부활 · 오른Shift 던지기      Esc 일시정지'
-      : 'WASD 이동 · Space 대시 · E 줍기/내려놓기(쓰러진 동료 옆: 누르고 있으면 부활) · R 던지기 · Tab 교체 · Q 따라와/기다려 · Esc 일시정지 · ` 튜닝');
+      : 'WASD 이동 · Space 대시 · E 줍기/내려놓기·둥지에서 꺼내기·부활(누르고 있기) · R 던지기 · 큰 알은 밀기 · Tab 교체 · Q 따라와/기다려 · Esc · ` 튜닝');
 
     // --- 조기 탈출 ---
     if (gs.exitHold > 0) {
@@ -117,6 +118,39 @@ export default class HudScene extends Phaser.Scene {
     }
 
     this.drawArrows();
+    this.drawNestUi();
+  }
+
+  // 둥지 꺼내기 진행도 + 타이밍 체크(회전 바늘)
+  drawNestUi() {
+    const gs = this.gs;
+    const n = gs.nest;
+    const g = this.checkG || (this.checkG = this.add.graphics().setDepth(20));
+    const t = this.checkText || (this.checkText = this.add.text(0, 0, '', { fontFamily: FONT, fontSize: '22px', fontStyle: 'bold', color: '#ffffff', stroke: '#000000', strokeThickness: 5 }).setOrigin(0.5).setDepth(21));
+    g.clear();
+    t.setText('');
+    if (!n || !n.extractor) return;
+    const W = CONFIG.world.viewWidth, H = CONFIG.world.viewHeight;
+    const cx = W / 2, cy = H / 2 + 120;
+    // 진행도 막대
+    g.fillStyle(0x000000, 0.65).fillRect(cx - 111, cy + 72, 222, 14);
+    g.fillStyle(0xffd27a, 1).fillRect(cx - 110, cy + 73, 220 * Math.min(1, n.progress), 12);
+    t.setPosition(cx, cy + 102).setFontSize(16).setText('알 꺼내는 중… (움직이면 취소)');
+    if (!n.check) return;
+    const S = CONFIG.skillCheck;
+    const R = 52;
+    const rad = (d) => Phaser.Math.DegToRad(d - 90);
+    g.fillStyle(0x000000, 0.55).fillCircle(cx, cy, R + 12);
+    g.lineStyle(6, 0x555a66, 1).strokeCircle(cx, cy, R);
+    // 성공 구간(흰색)과 대성공 구간(밝은 초록)
+    g.lineStyle(10, 0xffffff, 1);
+    g.beginPath(); g.arc(cx, cy, R, rad(n.check.zone), rad(n.check.zone + S.zoneDeg)); g.strokePath();
+    g.lineStyle(10, 0x8cf5a8, 1);
+    g.beginPath(); g.arc(cx, cy, R, rad(n.check.zone), rad(n.check.zone + S.greatDeg)); g.strokePath();
+    // 바늘
+    const a = rad(n.check.t * 360);
+    g.lineStyle(4, 0xff4d4d, 1).lineBetween(cx, cy, cx + Math.cos(a) * (R + 10), cy + Math.sin(a) * (R + 10));
+    t.setPosition(cx, cy).setFontSize(26).setText('E!');
   }
 
   // 화면 밖 알·동료·출구·추격자를 화면 가장자리 화살표로
@@ -137,10 +171,11 @@ export default class HudScene extends Phaser.Scene {
       for (const m of gs.monsters) targets.push({ x: m.x, y: m.y, color: 0x7cf0ff, label: m.tag });
     }
     for (const e of gs.eggs.list) {
-      if (e.isStone || e.state === 'carried' || e.state === 'swallowed' || e.state === 'coop' || e.state === 'drag') continue;
+      if (e.isStone || e.state === 'carried' || e.state === 'swallowed') continue;
       targets.push({ x: e.x, y: e.y, color: e.big ? 0x9fd0ff : 0xfff1a8, label: e.big ? '큰 알' : '알', small: true });
     }
-    if (gs.chaser && !gs.chaser.gone) targets.push({ x: gs.chaser.x, y: gs.chaser.y, color: 0xff3030, label: '우두머리' });
+    if (gs.nest.pile.length) targets.push({ x: gs.nest.x, y: gs.nest.y, color: 0xffd27a, label: '둥지' });
+    if (!gs.chaser.hidden && !gs.chaser.asleep) targets.push({ x: gs.chaser.x, y: gs.chaser.y, color: 0xff3030, label: '우두머리' });
 
     // 화살표가 놓일 테두리(위쪽 HUD, 아래쪽 힌트 줄은 피함)
     const box = { l: 26, r: W - 26, t: 118, b: H - 44 };

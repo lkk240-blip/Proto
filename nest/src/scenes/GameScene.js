@@ -13,6 +13,7 @@ import { Sfx } from '../systems/Sfx.js';
 import Monster from '../entities/Monster.js';
 import Guard from '../entities/Guard.js';
 import Chaser from '../entities/Chaser.js';
+import NestSystem from '../systems/NestSystem.js';
 import { incrementRunCount } from '../systems/RunLog.js';
 
 export default class GameScene extends Phaser.Scene {
@@ -49,11 +50,14 @@ export default class GameScene extends Phaser.Scene {
 
     this.spawnMonsters();
     this.eggs = new EggSystem(this);
-    this.eggs.spawn(this.map.points.nests);
+    this.nest = new NestSystem(this, this.map.points.nests[0]);
+    const bossAt = this.map.points.boss || this.map.points.nests[0];
+    this.chaser = new Chaser(this, bossAt.x, bossAt.y);
     this.eggs.spawnStones(this.map.points.stones);
     this.guards = this.spawnGuards();
     this.noise.onNoise((n) => {
       for (const g of this.guards) g.hear(n);
+      this.chaser.hear(n);
       if (n.source !== 'test') this.addTension(n.size * CONFIG.tension.noiseMul, 'noise');
     });
 
@@ -183,16 +187,6 @@ export default class GameScene extends Phaser.Scene {
       g.strokeRect(ex.x + 2, ex.y + 2, ex.w - 4, ex.h - 4);
     }
 
-    // 둥지 자리
-    for (const n of this.map.points.nests) {
-      g.lineStyle(10, 0x9c7a45, 0.9);
-      g.strokeCircle(n.x, n.y, ts * 1.4);
-      g.lineStyle(3, 0x6b5230, 0.9);
-      for (let i = 0; i < 14; i++) {
-        const a = (i / 14) * Math.PI * 2;
-        g.lineBetween(n.x + Math.cos(a) * ts * 1.1, n.y + Math.sin(a) * ts * 1.1, n.x + Math.cos(a + 0.5) * ts * 1.7, n.y + Math.sin(a + 0.5) * ts * 1.7);
-      }
-    }
 
     // 숲(#): 깊은 숲은 어둡게, 풀밭과 맞닿은 가장자리는 나무 꼭대기(원)를 겹쳐 그려 자연스럽게
     for (let y = 0; y < height; y++) {
@@ -336,26 +330,16 @@ export default class GameScene extends Phaser.Scene {
     return isWallAt(this.map, x, y);
   }
 
+  // 소란도: 쌓이다가 100이 되면 자고 있던 우두머리 괴수가 깬다. 우두머리가 깨어 있는 동안은 오르지 않음.
   addTension(amount) {
-    if (this.ended || this.stats.chaser) return; // 추격자는 한 판에 1회뿐 — 이후 소란도는 더 오르지 않음
+    if (this.ended || !this.chaser || !this.chaser.asleep) return;
     this.tension = Math.min(100, this.tension + amount);
-    if (this.tension >= 100) this.spawnChaser();
+    if (this.tension >= 100) this.chaser.wakeUp('tension');
   }
 
-  // 소란도 100: 맵 반대편(플레이어에게서 가장 먼 지점)에서 추격자(우두머리 괴수) 등장
-  spawnChaser() {
-    this.stats.chaser = true;
-    const pts = [...this.map.points.nests, ...Object.values(this.map.points.waypoints), ...this.map.points.guards];
-    let best = pts[0], bd = -1;
-    for (const q of pts) {
-      const d = Math.min(...this.monsters.map((m) => Math.hypot(q.x - m.x, q.y - m.y)));
-      if (d > bd) { bd = d; best = q; }
-    }
-    this.chaser = new Chaser(this, best.x, best.y);
-    this.fx.shake(500, 0.015);
-    this.hud?.showBanner('우두머리 괴수가 깨어났다!', '#ff4d4d');
-    this.hud?.redFlash();
-    Sfx.siren();
+  // 우두머리가 다시 잠들면 소란도를 절반쯤 내려서 한 번 더 깨울 여지를 남김
+  onBossSleep() {
+    this.tension = Math.min(this.tension, 40);
   }
 
   // 몬스터가 쓰러짐: 둘 다면 실패, 조작 중인 쪽이면 동료로 조작을 넘김
@@ -470,10 +454,8 @@ export default class GameScene extends Phaser.Scene {
     this.eggs.update(dt);
     this.updateBushes(dt);
     for (const g of this.guards) g.update(dt);
-    if (this.chaser) {
-      this.chaser.update(dt);
-      if (this.chaser.gone) this.chaser = null;
-    }
+    this.chaser.update(dt);
+    this.nest.update(dt);
     if (this.mode === 'duo') this.updateDuoCamera();
 
     this.elapsed += dt;
@@ -503,5 +485,6 @@ function newStats() {
   return {
     deposited: 0, cracks: 0, broken: 0, caught: 0, downs: 0, chaser: false, swaps: 0,
     coopTime: 0, dragTime: 0, swallowTime: 0, playTime: 0, throws: 0, catches: 0,
+    pushTime: 0, extracted: 0, checkGood: 0, checkGreat: 0, checkFails: 0, fatigueDrops: 0, bossWakes: 0, enemyHits: 0,
   };
 }

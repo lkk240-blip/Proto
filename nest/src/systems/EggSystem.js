@@ -1,47 +1,22 @@
 import Phaser from 'phaser';
 import { CONFIG } from '../config.js';
 import Egg from '../entities/Egg.js';
-import { newNoCollideGroup } from './physics.js';
 import { isFreeSpot } from './Los.js';
 import { Sfx } from './Sfx.js';
 
-// 알 배치, 줍기/내려놓기/던지기/삼키기, 질질 끌기, 공동 운반, 충돌 충격, 입금을 담당.
+// 알 규칙: 줍기/내려놓기/던지기, 오래 들면 피로(느려지다 떨어뜨림), 큰 알 밀어서 굴리기, 충돌 충격, 입금.
+// 알은 처음엔 모두 둥지(NestSystem) 안에 있고, 꺼내면 여기 list 로 들어온다.
 export default class EggSystem {
   constructor(scene) {
     this.scene = scene;
     this.list = [];
-    this.coops = [];
     scene.matter.world.on('collisionstart', (ev) => this.onCollision(ev));
   }
 
-  // ---------- 배치 ----------
-  spawn(nests) {
-    const E = CONFIG.egg;
-    const R = Phaser.Math.Between;
-    const small = R(E.smallMin, Math.max(E.smallMin, E.smallMax));
-    const big = Math.min(nests.length, R(E.bigMin, Math.max(E.bigMin, E.bigMax)));
-    const order = Phaser.Utils.Array.Shuffle(nests.map((_, i) => i));
-    const perNest = nests.map(() => []);
-    for (let i = 0; i < big; i++) perNest[order[i]].push('big');
-    for (let i = 0; i < small; i++) perNest[order[i % nests.length]].push('small');
-    nests.forEach((n, ni) => {
-      perNest[ni].forEach((kind, k) => {
-        const spot = this.findSpotAround(n.x, n.y, kind === 'big' ? 24 : 12, k);
-        this.list.push(new Egg(this.scene, spot.x, spot.y, kind));
-      });
-    });
-  }
-
-  findSpotAround(x, y, r, k) {
-    for (let tries = 0; tries < 30; tries++) {
-      const a = k * 2.2 + tries * 0.7;
-      const d = k === 0 && tries === 0 ? 0 : 28 + tries * 4;
-      const px = x + Math.cos(a) * d, py = y + Math.sin(a) * d;
-      if (isFreeSpot(this.scene.map, px, py, r + 4) && !this.list.some((e) => Math.hypot(e.x - px, e.y - py) < e.radius + r + 6)) {
-        return { x: px, y: py };
-      }
-    }
-    return { x, y };
+  spawnEggAt(x, y, kind) {
+    const egg = new Egg(this.scene, x, y, kind);
+    this.list.push(egg);
+    return egg;
   }
 
   // 맵의 r 자리에 던질 수 있는 돌멩이
@@ -57,14 +32,13 @@ export default class EggSystem {
   handleActions(m) {
     const c = m.controls;
     if (!c || m.stunned) return;
-    // 쓰러진 동료 옆이면 E는 부활 전용(줍기 안 함)
-    if (c.justPressed('grab') && !m.reviveTarget) this.grab(m);
+    if (c.justPressed('grab') && !m.reviveTarget) {
+      // 둥지 안이면 꺼내기/타이밍 체크가 우선
+      if (!this.scene.nest || !this.scene.nest.handleGrab(m)) this.grab(m);
+    }
+    if (m.extracting) return;
     if (c.justPressed('throw')) this.throwEgg(m);
     if (c.justPressed('swallow')) this.swallowOrSpit(m);
-  }
-
-  partnerOf(m) {
-    return this.scene.monsters.find((o) => o !== m) || null;
   }
 
   reach(m, egg) {
@@ -81,34 +55,20 @@ export default class EggSystem {
     return best;
   }
 
-  canCoop(m, egg) {
-    return m && !m.stunned && !m.carrying && !m.dragging && !m.coop && !m.belly &&
-      Phaser.Math.Distance.Between(m.x, m.y, egg.x, egg.y) <= CONFIG.bigEgg.coopRadius;
-  }
-
   grab(m) {
-    if (m.coop) { this.dissolveCoop(m.coop, false); Sfx.drop(); return; }
-    if (m.dragging) {
-      const egg = m.dragging;
-      const p = this.partnerOf(m);
-      this.stopDrag(m);
-      if (this.canCoop(p, egg) && !m.belly) this.startCoop(egg, m, p);
-      else Sfx.drop();
-      return;
-    }
     if (m.carrying) { this.putDown(m); return; }
-
-    const egg = this.nearestGroundEgg(m);
-    if (!egg) return;
-    if (egg.big) {
-      const p = this.partnerOf(m);
-      if (!m.belly && this.canCoop(m, egg) && this.canCoop(p, egg)) this.startCoop(egg, m, p);
-      else this.startDrag(m, egg);
-      this.onPickup(egg, CONFIG.tension.pickupBig);
-    } else {
+    const egg = this.nearestGroundEgg(m, (e) => !e.big);
+    if (egg) {
+      if (m.fatigue >= 1) {
+        this.scene.fx.popText(m.x, m.y - m.radius - 26, '팔이 저려서 못 들어!', { color: '#ffb36b', size: 16 });
+        return;
+      }
       this.attachCarry(m, egg);
       this.onPickup(egg, CONFIG.tension.pickupSmall);
+      return;
     }
+    const big = this.nearestGroundEgg(m, (e) => e.big);
+    if (big) this.scene.fx.popText(big.x, big.y - 40, '큰 알은 뒤에서 밀어서 굴려요', { color: '#cfe6ff', size: 16 });
   }
 
   onPickup(egg, tension) {
@@ -143,6 +103,17 @@ export default class EggSystem {
     if (this.releaseCarry(m)) Sfx.drop();
   }
 
+  // 너무 오래 들고 있어서 떨어뜨림: 앞으로 데굴데굴
+  forceDrop(m) {
+    const egg = this.releaseCarry(m);
+    if (!egg) return;
+    egg.setVelocityPx(m.facing.x * 120, m.facing.y * 120);
+    this.scene.noise.emit(egg.x, egg.y, CONFIG.noise.bump, 'drop');
+    this.scene.fx.popText(m.x, m.y - m.radius - 26, '아이고 팔이야!', { color: '#ffb36b', size: 20 });
+    this.scene.stats.fatigueDrops = (this.scene.stats.fatigueDrops || 0) + 1;
+    Sfx.bump();
+  }
+
   // 몬스터 앞쪽 빈자리(벽이면 뒤, 그것도 안 되면 제자리)
   spotInFront(m, r) {
     const d = m.radius + r + 4;
@@ -159,12 +130,9 @@ export default class EggSystem {
     if (!egg) return;
     const E = CONFIG.egg;
     m.carrying = null;
-    egg.holder = null;
-    egg.state = 'air';
     const start = { x: m.x + m.facing.x * (m.radius * 0.6), y: m.y + m.facing.y * (m.radius * 0.6) };
     egg.moveTo(start.x, start.y);
-    egg.z = m.carryMode === 'horn' ? 8 : m.radius + 10;
-    egg.air = { vx: m.facing.x * E.throwSpeed, vy: m.facing.y * E.throwSpeed, vz: E.throwUpSpeed, thrower: m, t: 0 };
+    egg.launch(m.facing.x * E.throwSpeed, m.facing.y * E.throwSpeed, E.throwUpSpeed, m.carryMode === 'horn' ? 8 : m.radius + 10, m);
     Sfx.throw();
     this.scene.stats.throws++;
   }
@@ -182,7 +150,6 @@ export default class EggSystem {
   swallowOrSpit(m) {
     if (!CONFIG.features.uniqueSkills || m.typeKey !== 'kkuldduk') return;
     if (m.belly) { this.spit(m, false); return; }
-    if (m.coop) return; // 공동 운반 중엔 입이 막힘
     let egg = m.carrying;
     if (egg && egg.isStone) return;
     if (egg) {
@@ -226,61 +193,50 @@ export default class EggSystem {
     }
   }
 
-  // ---------- 큰 알: 질질 끌기 ----------
-  startDrag(m, egg) {
-    const group = newNoCollideGroup();
-    egg.state = 'drag';
-    egg.holder = m;
-    egg.setGroup(group);
-    m.body.collisionFilter.group = group;
-    m.dragging = egg;
-    m.dragNoiseTimer = 0;
-    Sfx.pickup();
-  }
-
-  // 끌려오는 알: 몬스터와의 거리가 줄 길이보다 멀어지면 몬스터 쪽으로 끌려감(벽에는 물리적으로 막힘)
-  updateDrag(m) {
-    const egg = m.dragging;
-    const len = m.radius + egg.radius + 8;
-    const dx = m.x - egg.x, dy = m.y - egg.y;
-    const d = Math.hypot(dx, dy) || 1;
-    const pull = Math.max(0, d - len) * 8; // 줄이 팽팽할수록 빨리
-    egg.setVelocityPx((dx / d) * pull, (dy / d) * pull);
-  }
-
-  stopDrag(m) {
-    const egg = m.dragging;
-    if (!egg) return null;
-    m.dragging = null;
-    m.body.collisionFilter.group = 0;
-    egg.setGroup(0);
-    egg.state = 'ground';
-    egg.holder = null;
-    return egg;
-  }
-
-  // ---------- 큰 알: 공동 운반 ----------
-  startCoop(egg, a, b) {
-    const coop = new Coop(this.scene, egg, a, b);
-    this.coops.push(coop);
-    Sfx.coop();
-    this.scene.fx.popText(egg.x, egg.y - 40, '영차!', { color: '#9fe8ff', size: 26 });
-    return coop;
-  }
-
-  dissolveCoop(coop, crack) {
-    coop.destroy();
-    this.coops = this.coops.filter((c) => c !== coop);
-    if (crack) coop.egg.crack('coop-drop');
+  // ---------- 큰 알: 밀어서 굴리기 ----------
+  // 몬스터가 큰 알 쪽으로 걸어가며 몸이 닿아 있으면 그 방향으로 굴러간다. 둘이 같이 밀면 더 빠름.
+  updatePush(dt) {
+    const B = CONFIG.bigEgg;
+    for (const m of this.scene.monsters) m.pushing = null;
+    for (const e of this.list) {
+      if (!e.big || e.state !== 'ground') continue;
+      let vx = 0, vy = 0, n = 0;
+      for (const m of this.scene.monsters) {
+        if (m.stunned || m.carrying || m.extracting) continue;
+        const dx = e.x - m.x, dy = e.y - m.y;
+        const d = Math.hypot(dx, dy);
+        if (d > m.radius + e.radius + 8) continue;
+        const mv = m.controls ? m.controls.getMove() : { x: 0, y: 0 };
+        const ml = Math.hypot(mv.x, mv.y);
+        if (ml < 0.3) continue;
+        const dot = (mv.x * dx + mv.y * dy) / (ml * d || 1);
+        if (dot < B.pushAngle) continue;
+        const sp = CONFIG.monster.baseSpeed * m.type.speedMul * B.pushSpeedMul;
+        vx += (mv.x / ml) * sp;
+        vy += (mv.y / ml) * sp;
+        n++;
+        m.pushing = e;
+      }
+      if (!n) continue;
+      const len = Math.hypot(vx, vy);
+      const cap = n > 1 ? B.pushMaxSpeed : Math.min(len, B.pushMaxSpeed);
+      if (len > cap) { vx = (vx / len) * cap; vy = (vy / len) * cap; }
+      const v = e.body.velocity;
+      const k = 1 - Math.pow(0.8, dt * 60);
+      e.setVelocityPx(Phaser.Math.Linear(v.x * 60, vx, k), Phaser.Math.Linear(v.y * 60, vy, k));
+      this.scene.stats.pushTime = (this.scene.stats.pushTime || 0) + dt;
+      if (!e.pickedOnce) this.onPickup(e, CONFIG.tension.pickupBig);
+    }
   }
 
   // ---------- 충격 ----------
   onDash(m) {
-    // 까부리가 알을 뿔에 낀 채 대시하면 충격
+    // 까부리가 알을 뿔에 낀 채 대시하면 충격(고유 스킬 켰을 때만)
     if (m.carrying && m.carryMode === 'horn') m.carrying.crack('horn-dash');
   }
 
   dropAllOnHit(m) {
+    if (m.extracting) m.extracting.cancel(null);
     if (m.carrying) {
       const egg = this.releaseCarry(m);
       if (egg) {
@@ -289,11 +245,6 @@ export default class EggSystem {
         egg.crack('caught');
       }
     }
-    if (m.dragging) {
-      const egg = this.stopDrag(m);
-      if (egg) egg.crack('caught');
-    }
-    if (m.coop) this.dissolveCoop(m.coop, true);
   }
 
   onCollision(ev) {
@@ -335,10 +286,7 @@ export default class EggSystem {
     if (h) {
       if (h.carrying === egg) h.carrying = null;
       if (h.belly === egg) { h.belly = null; h.drawBelly(); }
-      if (h.dragging === egg) this.stopDrag(h);
     }
-    const coop = this.coops.find((c) => c.egg === egg);
-    if (coop) { coop.destroy(); this.coops = this.coops.filter((c) => c !== coop); }
     this.list = this.list.filter((e) => e !== egg);
   }
 
@@ -353,10 +301,7 @@ export default class EggSystem {
     if (h) {
       if (h.carrying === egg) h.carrying = null;
       if (h.belly === egg) { h.belly = null; h.drawBelly(); }
-      if (h.dragging === egg) this.stopDrag(h);
     }
-    const coop = this.coops.find((c) => c.egg === egg);
-    if (coop) { coop.destroy(); this.coops = this.coops.filter((c) => c !== coop); }
     const value = egg.value;
     egg.deposited = true;
     this.scene.onDeposit(egg, value);
@@ -371,31 +316,20 @@ export default class EggSystem {
 
   // ---------- 프레임 ----------
   update(dt) {
-    const B = CONFIG.bigEgg;
-    for (const coop of this.coops) coop.update(dt);
-
+    const C = CONFIG.carry;
+    this.updatePush(dt);
     for (const m of this.scene.monsters) {
-      // 질질 끌기 소음
-      if (m.dragging) {
-        this.updateDrag(m);
-        this.scene.stats.dragTime += dt;
-        const moving = Math.hypot(m.body.velocity.x, m.body.velocity.y) * 60 > 20;
-        m.dragNoiseTimer = (m.dragNoiseTimer || 0) - dt;
-        if (moving && m.dragNoiseTimer <= 0) {
-          m.dragNoiseTimer = B.dragNoiseInterval;
-          this.scene.noise.emit(m.dragging.x, m.dragging.y, B.dragNoise, 'drag');
-          this.scene.fx.popText(m.dragging.x, m.dragging.y - 30, '끼익', { color: '#cccccc', size: 14, rise: 20, duration: 500 });
-        }
-      }
-      if (m.coop) this.scene.stats.coopTime += dt / 2; // 두 마리가 각각 더하므로 절반
-      // 삼킨 시간
+      // 피로도: 알(돌멩이 제외)을 들고 있으면 쌓이고, 내려놓으면 회복
+      const heavy = m.carrying && !m.carrying.isStone;
+      if (heavy) m.fatigue = Math.min(1, m.fatigue + dt / C.fatigueTime);
+      else m.fatigue = Math.max(0, m.fatigue - dt / C.recoverTime);
+      if (heavy && m.fatigue >= 1) this.forceDrop(m);
       if (m.belly) {
         m.bellyTime += dt;
         this.scene.stats.swallowTime += dt;
         if (m.bellyTime >= CONFIG.kkuldduk.swallowLimit) this.spit(m, true);
       }
     }
-
     for (const e of [...this.list]) {
       e.update(dt);
       if (e.broken || e.deposited || e.isStone) continue;
@@ -409,94 +343,4 @@ export default class EggSystem {
 
 function fmt(v) {
   return Number.isInteger(v) ? String(v) : v.toFixed(2);
-}
-
-// 공동 운반 덩어리: 알(가운데) + 몬스터 두 마리(양 끝). Matter 제약(constraint)으로 묶는다.
-class Coop {
-  constructor(scene, egg, a, b) {
-    this.scene = scene;
-    this.egg = egg;
-    this.members = [a, b];
-    this.group = newNoCollideGroup();
-    for (const body of [egg.body, a.body, b.body]) body.collisionFilter.group = this.group;
-    egg.state = 'coop';
-    egg.holder = null;
-    a.coop = this; b.coop = this;
-    this.vel = new Phaser.Math.Vector2(0, 0);
-
-    // 축: 두 몬스터를 잇는 방향. 알 양쪽에 몬스터를 배치.
-    const ang = Math.atan2(b.y - a.y, b.x - a.x);
-    this.angle = ang;
-    this.da = a.radius + egg.radius + 4;
-    this.db = b.radius + egg.radius + 4;
-    const dx = Math.cos(ang), dy = Math.sin(ang);
-    const map = scene.map;
-    const pa = { x: egg.x - dx * this.da, y: egg.y - dy * this.da };
-    const pb = { x: egg.x + dx * this.db, y: egg.y + dy * this.db };
-    if (isFreeSpot(map, pa.x, pa.y, a.radius)) scene.matter.body.setPosition(a.body, pa);
-    if (isFreeSpot(map, pb.x, pb.y, b.radius)) scene.matter.body.setPosition(b.body, pb);
-
-    const M = scene.matter;
-    this.constraints = [
-      M.add.constraint(egg.body, a.body, this.da, 0.5, { damping: 0.05 }),
-      M.add.constraint(egg.body, b.body, this.db, 0.5, { damping: 0.05 }),
-      M.add.constraint(a.body, b.body, this.da + this.db, 0.5, { damping: 0.05 }),
-    ];
-  }
-
-  // 조작 입력: 1인 모드는 조작 중인 몬스터, 2인 모드는 두 플레이어 입력의 합(줄다리기)
-  input() {
-    let x = 0, y = 0, n = 0;
-    for (const m of this.members) {
-      if (m.controls && (this.scene.mode === 'duo' || m.controlled)) {
-        const mv = m.controls.getMove();
-        x += mv.x; y += mv.y; n++;
-      }
-    }
-    const len = Math.hypot(x, y);
-    if (len > 1) { x /= len; y /= len; }
-    return { x, y };
-  }
-
-  update(dt) {
-    const B = CONFIG.bigEgg;
-    const [a, b] = this.members;
-    const mv = this.input();
-    const speed = CONFIG.monster.baseSpeed * (1 - B.coopSlow);
-    const k = 1 - Math.pow(1 - B.coopAccel, dt * 60);
-    this.vel.x = Phaser.Math.Linear(this.vel.x, mv.x * speed, k);
-    this.vel.y = Phaser.Math.Linear(this.vel.y, mv.y * speed, k);
-
-    // 실제 축 각도(몬스터 위치 기준)
-    this.angle = Math.atan2(b.y - a.y, b.x - a.x);
-    // 움직이는 방향과 나란하도록(들것처럼) 천천히 회전 → 좁은 문도 통과 가능
-    let omega = 0;
-    if (this.vel.lengthSq() > 400) {
-      const va = Math.atan2(this.vel.y, this.vel.x);
-      let d1 = Phaser.Math.Angle.Wrap(va - this.angle);
-      let d2 = Phaser.Math.Angle.Wrap(va + Math.PI - this.angle);
-      const diff = Math.abs(d1) < Math.abs(d2) ? d1 : d2;
-      const maxStep = B.coopTurnRate * dt;
-      omega = Phaser.Math.Clamp(diff, -maxStep, maxStep) / Math.max(dt, 1e-3);
-    }
-    const e = this.egg;
-    const setV = (body, vx, vy) => this.scene.matter.body.setVelocity(body, { x: vx / 60, y: vy / 60 });
-    setV(e.body, this.vel.x, this.vel.y);
-    for (const m of this.members) {
-      const rx = m.x - e.x, ry = m.y - e.y;
-      setV(m.body, this.vel.x - omega * ry, this.vel.y + omega * rx);
-    }
-  }
-
-  destroy() {
-    for (const c of this.constraints) this.scene.matter.world.removeConstraint(c);
-    for (const m of this.members) {
-      m.coop = null;
-      m.body.collisionFilter.group = 0;
-    }
-    if (!this.egg.broken && !this.egg.deposited) {
-      this.egg.setGroup(0);
-      this.egg.state = 'ground';
-    }
-  }
 }

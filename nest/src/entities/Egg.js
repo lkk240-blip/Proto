@@ -21,7 +21,7 @@ export default class Egg {
       density: this.big ? 0.03 : this.isStone ? 0.004 : 0.002,
       frictionAir: this.big ? 0.25 : this.isStone ? 0.12 : 0.06,
       friction: 0.05,
-      restitution: 0.35,
+      restitution: this.isStone ? 0.3 : 0.55, // 알은 벽에 통 튕김
       label: 'egg',
       collisionFilter: { category: CAT.EGG, mask: MASK.EGG, group: 0 },
     });
@@ -183,7 +183,13 @@ export default class Egg {
 
   update(dt) {
     this.crackCd = Math.max(0, this.crackCd - dt);
+    // 구르다 멈추는 정도(튜닝 가능)
+    this.body.frictionAir = this.big ? CONFIG.bigEgg.rollFriction : this.isStone ? 0.12 : CONFIG.egg.rollFriction;
     if (this.state === 'air') this.updateAir(dt);
+    // 굴러가는 만큼 회전(알이 구르는 느낌)
+    const v = this.state === 'air' && this.air ? Math.hypot(this.air.vx, this.air.vy) : this.speedPx;
+    const dirX = this.state === 'air' && this.air ? this.air.vx : this.body.velocity.x;
+    this.roll = (this.roll || 0) + (Math.sign(dirX) || 1) * (v * dt) / this.radius;
     this.prevSpeed = this.speedPx;
     this.syncView();
   }
@@ -199,8 +205,8 @@ export default class Egg {
     const hitX = this.scene.isWallAt(nx + Math.sign(a.vx) * r, this.y);
     const hitY = this.scene.isWallAt(this.x, ny + Math.sign(a.vy) * r);
     if (hitX || hitY) {
-      if (hitX) { a.vx *= -0.45; nx = this.x; }
-      if (hitY) { a.vy *= -0.45; ny = this.y; }
+      if (hitX) { a.vx *= -E.wallBounce; nx = this.x; }
+      if (hitY) { a.vy *= -E.wallBounce; ny = this.y; }
       Sfx.bump();
       this.crack('wall-throw');
       if (this.broken) return;
@@ -213,7 +219,7 @@ export default class Egg {
     if (this.z < CONFIG.stone.hitHeight && this.checkEnemyHit(a)) return;
 
     // 다른 몬스터가 받기
-    if (this.z < E.catchMaxHeight) {
+    if (this.z < E.catchMaxHeight && !a.noCatch) {
       for (const m of this.scene.monsters) {
         if (m === a.thrower && a.t < 0.3) continue;
         if (!m.canHold()) continue;
@@ -227,14 +233,35 @@ export default class Egg {
     if (this.z <= 0) {
       const impact = -a.vz;
       this.z = 0;
-      this.air = null;
-      this.state = 'ground';
-      this.setPhysicsActive(true);
-      this.setVelocityPx(a.vx * 0.3, a.vy * 0.3);
+      a.bounces = (a.bounces || 0) + 1;
       if (impact >= E.landCrackSpeed) this.crack('land');
       else Sfx.bump();
-      this.scene.noise.emit(this.x, this.y, CONFIG.noise.bump, 'land');
+      if (this.broken) return;
+      if (a.bounces === 1) this.scene.noise.emit(this.x, this.y, CONFIG.noise.bump, 'land');
+      const up = impact * E.bounce;
+      if (up >= E.bounceMinSpeed) {
+        // 통통 튀기: 높이 속도는 줄고 앞으로는 계속 굴러감
+        a.vz = up;
+        a.vx *= 0.8;
+        a.vy *= 0.8;
+        this.scene.tweens.add({ targets: this.view, scaleX: 1.25, scaleY: 0.8, duration: 60, yoyo: true });
+      } else {
+        // 더 안 튀면 바닥에서 굴러감(물리)
+        this.air = null;
+        this.state = 'ground';
+        this.setPhysicsActive(true);
+        this.setVelocityPx(a.vx * 0.85, a.vy * 0.85);
+      }
     }
+  }
+
+  // 공중으로 띄우기(던지기·둥지에서 튀어나오기 공용)
+  launch(vx, vy, vz, z, thrower, noCatch = false) {
+    this.holder = null;
+    this.state = 'air';
+    this.setPhysicsActive(false);
+    this.z = z;
+    this.air = { vx, vy, vz, thrower, t: 0, bounces: 0, noCatch };
   }
 
   checkEnemyHit(a) {
@@ -286,7 +313,7 @@ export default class Egg {
     // 곧 깨질 알(금 2단계)은 부들부들 떨림
     const wobble = this.cracks >= 2 ? Math.sin(this.scene.time.now * 0.03) * 0.12 : 0;
     this.view.setPosition(x, y - z).setScale(scale).setDepth(depth);
-    this.view.rotation = wobble;
+    this.view.rotation = (this.state === 'carried' ? 0 : this.roll || 0) + wobble;
     const zs = Math.max(0.4, 1 - z / 150);
     this.shadow.setPosition(x, y + this.radius * 0.6).setScale(zs * scale).setAlpha(0.35 * zs);
   }

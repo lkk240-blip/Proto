@@ -35,8 +35,9 @@ export default class Monster {
     this.carryMode = typeKey === 'kkaburi' && CONFIG.features.uniqueSkills ? 'horn' : 'hands';
     this.belly = null;          // 삼킨 작은 알(꿀떡이)
     this.bellyTime = 0;
-    this.dragging = null;       // 질질 끄는 큰 알
-    this.coop = null;           // 공동 운반 덩어리
+    this.pushing = null;        // 밀고 있는 큰 알(EggSystem 이 매 프레임 갱신)
+    this.extracting = null;     // 둥지에서 알 꺼내는 중
+    this.fatigue = 0;           // 알을 오래 들면 쌓이는 피로도 0~1
 
     this.stunTimer = 0;
     this.graceTimer = 0;
@@ -53,10 +54,10 @@ export default class Monster {
   get y() { return this.body.position.y; }
   // 쓰러진 것도 "행동 불가"로 취급(잡히지 않음, 조작·줍기 불가)
   get stunned() { return this.stunTimer > 0 || this.downed; }
-  get hasEgg() { return !!(this.carrying || this.belly || this.dragging || this.coop); }
+  get hasEgg() { return !!((this.carrying && !this.carrying.isStone) || this.belly || this.pushing); }
 
   canHold() {
-    return !this.stunned && !this.carrying && !this.dragging && !this.coop;
+    return !this.stunned && !this.carrying && !this.extracting;
   }
 
   buildVisual() {
@@ -133,6 +134,12 @@ export default class Monster {
       g.fillStyle(0x000000, 0.6).fillRect(x0 + i * (w + gap) - 1, y - 1, w + 2, 7);
       g.fillStyle(i < this.hp ? 0xff5d6c : 0x3a3a3a, 1).fillRect(x0 + i * (w + gap), y, w, 5);
     }
+    // 피로도(알을 오래 들면 차오름, 가득 차면 떨어뜨림)
+    if (this.fatigue > 0.01) {
+      const fw = n * w + (n - 1) * gap, fy = y + 8;
+      g.fillStyle(0x000000, 0.6).fillRect(x0 - 1, fy - 1, fw + 2, 5);
+      g.fillStyle(this.fatigue > 0.75 ? 0xff7b3a : 0xffd23f, 1).fillRect(x0, fy, fw * this.fatigue, 3);
+    }
     if (this.downed && this.reviveProgress > 0) {
       g.lineStyle(4, 0x8cf5a8, 1);
       g.beginPath();
@@ -144,7 +151,9 @@ export default class Monster {
   speed() {
     let s = CONFIG.monster.baseSpeed * this.type.speedMul;
     if (this.carrying && this.carryMode === 'hands') s *= 1 - CONFIG.egg.carrySmallSlow;
-    if (this.dragging) s *= 1 - CONFIG.bigEgg.dragSlow;
+    // 오래 들고 있을수록 점점 느려짐
+    if (this.carrying && !this.carrying.isStone) s *= 1 - this.fatigue * CONFIG.carry.slowMax;
+    if (this.pushing) s *= CONFIG.bigEgg.pushSpeedMul;
     return s;
   }
 
@@ -177,12 +186,9 @@ export default class Monster {
       // 튕겨 나간 속도가 점점 줄어듦
       const damp = Math.pow(0.9, dt * 60);
       this.scene.matter.body.setVelocity(this.body, { x: v.x * damp, y: v.y * damp });
-    } else if (this.coop) {
-      // 공동 운반 중에는 덩어리(Coop)가 속도를 정한다. 얼굴은 알 쪽으로.
-      const e = this.coop.egg;
-      this.facing.set(e.x - this.x, e.y - this.y).normalize();
     } else {
-      const move = this.controls ? this.controls.getMove() : { x: 0, y: 0 };
+      // 둥지에서 꺼내는 중에는 제자리(움직이려 하면 NestSystem 이 취소)
+      const move = this.controls && !this.extracting ? this.controls.getMove() : { x: 0, y: 0 };
       if (move.x || move.y) this.facing.set(move.x, move.y).normalize();
       if (this.controls && this.controls.justPressed('dash')) this.tryDash();
 
@@ -206,7 +212,7 @@ export default class Monster {
   }
 
   tryDash() {
-    if (this.dashCooldown > 0 || this.dashTimer > 0 || this.dragging) return false;
+    if (this.dashCooldown > 0 || this.dashTimer > 0 || this.extracting) return false;
     this.dashCooldown = CONFIG.monster.dashCooldown;
     this.dashTimer = CONFIG.monster.dashDuration;
     this.scene.noise.emit(this.x, this.y, CONFIG.monster.dashNoise, 'dash');

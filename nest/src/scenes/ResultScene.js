@@ -29,11 +29,12 @@ export default class ResultScene extends Phaser.Scene {
       ['깨뜨린 알 수', s.broken],
       ['괴수에게 잡힌 횟수', s.caught],
       ['쓰러진 횟수', s.downs],
-      ['우두머리(추격자) 등장', s.chaser ? '예' : '아니오'],
+      ['우두머리 깨운 횟수', s.bossWakes],
       ['교체 횟수', s.swaps],
-      ['공동 운반 시간', `${s.coopTime.toFixed(1)}초`],
-      ['질질 끌기 시간', `${s.dragTime.toFixed(1)}초`],
-      ['삼킨 시간', `${s.swallowTime.toFixed(1)}초`],
+      ['둥지에서 꺼낸 알', s.extracted],
+      ['타이밍 체크 성공/실패', `${s.checkGood + s.checkGreat}/${s.checkFails}`],
+      ['큰 알 민 시간', `${s.pushTime.toFixed(1)}초`],
+      ['팔 저려 떨어뜨림', s.fatigueDrops],
       ['플레이 시간', `${Math.floor(s.playTime / 60)}분 ${Math.round(s.playTime % 60)}초`],
     ];
     const half = Math.ceil(rows.length / 2);

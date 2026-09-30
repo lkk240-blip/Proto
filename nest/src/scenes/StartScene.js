@@ -21,9 +21,9 @@ export default class StartScene extends Phaser.Scene {
     this.add.text(W / 2 + 10, 100, '알 운반 하이스트 — 프로토타입', st(20, '#cccccc')).setOrigin(0.5);
 
     // 목표 요약
-    this.add.text(W / 2, 146,
-      `체력 ${CONFIG.monster.maxHp}칸, 둘 다 쓰러지면 실패.  잠든 괴수들을 깨우지 말고 알을 숲 출구(초록 칸)로 옮겨 ${CONFIG.run.timeLimit / 60}분 안에 가치 ${CONFIG.run.quota} 이상 확보하세요.  알은 충격 3번이면 깨집니다.`,
-      st(17, '#ffffff')).setOrigin(0.5);
+    this.add.text(W / 2, 140,
+      `둥지에서 알을 꺼내 숲 출구(초록 칸)로 옮기세요. 둥지 옆엔 우두머리 괴수가 자고 있어요.\n${CONFIG.run.timeLimit / 60}분 안에 가치 ${CONFIG.run.quota} 이상 · 알은 충격 3번이면 깨짐 · 체력 ${CONFIG.monster.maxHp}칸, 둘 다 쓰러지면 실패`,
+      st(16, '#ffffff', { align: 'center', lineSpacing: 4 })).setOrigin(0.5);
 
     // 모드 선택
     this.soloBtn = this.modeButton(W / 2 - 150, 206, '1인 (기본)', 'solo');
@@ -81,8 +81,8 @@ export default class StartScene extends Phaser.Scene {
 
     if (this.mode === 'solo') {
       head(x0 + 30, y0 + 18, '조작 (혼자서 몬스터 2마리를 번갈아 조작)');
-      const L = [['WASD', '이동'], ['Space', `대시 (쿨타임 ${CONFIG.monster.dashCooldown}초, 소음!)`], ['E', '알·돌멩이 줍기 / 내려놓기'], ['R', `작은 알·돌멩이 던지기 (괴수 명중 시 ${CONFIG.stone.enemyStunTime}초 기절)`], ['E 누르고 있기', '쓰러진 동료 옆에서 부활']];
-      const R = [['Tab', '조작 몬스터 교체'], ['Q', '동료에게 따라와 ↔ 기다려'], ['E (큰 알)', '동료가 옆에 있으면 공동 운반'], ['Esc', '일시정지'], ['`', '튜닝 패널']];
+      const L = [['WASD', '이동'], ['Space', `대시 (쿨타임 ${CONFIG.monster.dashCooldown}초, 소음!)`], ['E', '줍기 / 내려놓기 · 둥지 안: 알 꺼내기'], ['E (체크 뜨면)', '바늘이 구간에 있을 때! 실패하면 큰 소음'], ['R', `작은 알·돌멩이 던지기 (괴수 명중 시 기절)`]];
+      const R = [['Tab', '조작 몬스터 교체'], ['Q', '동료에게 따라와 ↔ 기다려'], ['큰 알', '뒤에서 걸어 밀면 굴러감(둘이 밀면 빠름)'], ['E 누르고 있기', '쓰러진 동료 옆에서 부활'], ['Esc / `', '일시정지 / 튜닝 패널']];
       L.forEach(([k, d], i) => key(x0 + 30, y0 + 56 + i * 40, k, d));
       R.forEach(([k, d], i) => key(x0 + 540, y0 + 56 + i * 40, k, d));
     } else {
@@ -95,9 +95,9 @@ export default class StartScene extends Phaser.Scene {
     }
     // 규칙 요약
     const tips = [
-      '회색 돌멩이는 가치가 없지만 던져서 괴수를 기절시킬 수 있음 · 알로 맞혀도 기절하지만 알에 금이 감 · 받지 못한 알은 착지하며 금이 감',
+      '알을 오래 들면 점점 느려지다 떨어뜨림(발밑 노란 막대) · 던진 알은 통통 튀고 굴러감 · 받지 못하면 착지하며 금이 감',
       '큰 알(가치 3): 혼자 E = 질질 끌기(아주 느리고 시끄러움) · 둘이 붙어서 E = 공동 운반 · 노란 파동 = 소음',
-      '괴수: Zzz = 잠(소음이 쌓이면 깸, 보라 게이지) · ? = 의심 · ! = 추격 · 소란도 100이면 우두머리 괴수 등장',
+      '괴수: Zzz = 잠(소음이 쌓이면 깸, 보라 게이지) · ? = 의심 · ! = 추격 · 우두머리는 소음·접촉·소란도 100으로 깸',
       '밝은 초록 수풀에 숨으면 괴수가 아주 늦게 알아챔 · 수풀 속 괴수는 가까이 가야 보임(잎이 흔들리면 뭔가 있다는 뜻)',
     ];
     tips.forEach((t, i) => c.add(this.add.text(x0 + 30, y0 + 256 + i * 25, t, { fontFamily: 'sans-serif', fontSize: '14px', color: '#9fb0c8' })));
