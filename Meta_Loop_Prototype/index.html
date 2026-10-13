@@ -1447,6 +1447,161 @@ prepPanels.push(() => {
 DEBUG_SECTIONS.push(() => `<div class="dim">능력 배정 방식은 이후 부화하는 몬스터부터 적용됩니다. 잔성장 끄기는 구매 내역을 지우지 않고 효과만 0으로 만듭니다.</div>`);
 
 /* =====================================================================
+   [6] 테스트 기록 · 내보내기
+   - 실제 경과 시간 = 화면이 보이고, 마지막 입력 후 CONFIG.activeIdleCapSec 이내인 시간만 누적
+   - 사이클 = 알 획득(런 정산) → 부화 → 그 몬스터의 첫 재출동. 사이클 시간 = 실제 경과 + 사이에 낀 런 수 × 가상 런 시간
+   ===================================================================== */
+const ACTION_GROUP = {
+  build_prod: '거점', build_hatchery: '거점', assign: '거점', unassign: '거점', demolish: '거점', hq_upgrade: '거점', residual_buy: '거점',
+  equip_fruit: '출동 준비', party: '출동 준비', pick_card: '출동 준비',
+  track: '보드·도감', stake_reveal: '보드·도감', stake_reroll: '보드·도감',
+};
+// 의미 있는 선택으로 셀 행동(파티 넣고 빼기·카드 고르기 같은 단순 조작 제외)
+const MEANINGFUL = ['build_prod', 'build_hatchery', 'assign', 'unassign', 'demolish', 'hq_upgrade', 'residual_buy', 'equip_fruit', 'track', 'stake_reveal', 'stake_reroll'];
+const ACTION_LABEL = { build_prod: '생산 건설', build_hatchery: '부화장 건설', assign: '배치', unassign: '배치 해제', demolish: '철거', hq_upgrade: '거점 업그레이드',
+  residual_buy: '잔성장 구매', equip_fruit: '열매 장착', party: '파티 편성', pick_card: '카드 선택', track: '추적 표식', stake_reveal: '판돈:공개', stake_reroll: '판돈:다시뽑기' };
+
+const L = () => S.log;
+const Clock = { lastInput: Date.now(), lastTick: Date.now(), dirty: 0 };
+['click', 'keydown', 'pointermove', 'wheel'].forEach(ev => window.addEventListener(ev, () => { Clock.lastInput = Date.now(); }, { passive: true }));
+setInterval(() => {
+  const now = Date.now(), dt = now - Clock.lastTick; Clock.lastTick = now;
+  if (!S || document.visibilityState !== 'visible') return;
+  if (now - Clock.lastInput > CONFIG.activeIdleCapSec * 1000) return;
+  L().activeMs += Math.min(dt, 5000);
+  if (++Clock.dirty >= 10) { Clock.dirty = 0; persist(); }
+}, 1000);
+document.addEventListener('visibilitychange', () => { if (S) persist(); });
+window.addEventListener('beforeunload', () => { if (S) persist(); });
+const minutes = ms => Math.round(ms / 600) / 100;
+const modulesSnap = () => ({ ...W().modules });
+
+function startVisit() {
+  const l = L();
+  if (l.curVisit) return;
+  l.curVisit = { index: l.visits.length + 1, afterRun: W().runCount, startActive: l.activeMs, startedAt: new Date().toISOString(), actions: {}, seq: [], by: actor() };
+}
+visitActionHooks.push((type, detail) => {
+  startVisit();
+  const v = L().curVisit; v.actions[type] = (v.actions[type] || 0) + 1; v.seq.push(type);
+});
+toBaseHooks.push(() => { startVisit(); persist(); });
+detailOpenHooks.push(id => { L().counters.detailOpens++; L().sinceRun.detailOpens++; (L().sinceRun.cards ||= []).push(id); });
+trackHooks.push(sp => { L().counters.tracks++; L().sinceRun.tracks++; L().events.push({ t: new Date().toISOString(), type: 'track', species: sp, by: actor() }); });
+stakeHooks.push(kind => { const k = kind === 'reveal' ? 'stakeReveal' : 'stakeReroll'; L().counters[k]++; L().sinceRun[k]++; });
+
+beforeRunHooks.push(ctx => {
+  const l = L(), w = W(), card = ctx.card;
+  startVisit();
+  const v = l.curVisit;
+  v.endActive = l.activeMs; v.durationMin = minutes(v.endActive - v.startActive);
+  v.total = v.seq.length; v.meaningful = v.seq.filter(t => MEANINGFUL.includes(t)).length;
+  v.distinctMeaningful = new Set(v.seq.filter(t => MEANINGFUL.includes(t))).size;
+  v.modules = modulesSnap(); v.runAfter = w.runCount + 1;
+  l.visits.push(v); l.curVisit = null;
+  const bangOn = c => c.nests.some(n => nestView(n).sym === '!');
+  ctx.log = {
+    visitIndex: v.index, departActive: l.activeMs,
+    cardArchetype: card.archetype, cardHasBang: bangOn(card),
+    cardHasTracked: !!w.tracked && card.nests.some(n => n.species === w.tracked && nestView(n).sym !== '?'),
+    boardArchetypes: w.board.cards.map(c => c.archetype + (bangOn(c) ? '!' : '')).join('/'),
+    boardHadBang: w.board.cards.some(bangOn),
+    detailOpens: l.sinceRun.detailOpens, tracks: l.sinceRun.tracks, stakeReveal: l.sinceRun.stakeReveal, stakeReroll: l.sinceRun.stakeReroll,
+  };
+  l.sinceRun = { detailOpens: 0, tracks: 0, stakeReveal: 0, stakeReroll: 0 };
+  // 사이클 종료: 알에서 태어난 몬스터의 첫 출동
+  for (const m of ctx.party) {
+    const c = m.cycle; if (!c || c.done) continue;
+    c.done = true;
+    const runs = (w.runCount + 1) - c.acqRun, realMs = l.activeMs - c.acqActive;
+    const total = minutes(realMs) + runs * CONFIG.virtualRunMinutes;
+    l.cycles.push({ index: l.cycles.length + 1, monster: m.name, species: m.species, eggTag: m.tag, acquiredRun: c.acqRun, hatchedRun: c.hatchRun, deployedRun: w.runCount + 1,
+      runsBetween: runs, realMin: minutes(realMs), virtualMin: runs * CONFIG.virtualRunMinutes, totalMin: Math.round(total * 100) / 100,
+      within30: total <= 30, modules: modulesSnap() });
+  }
+});
+afterRunHooks.push((r, ctx) => {
+  const l = L(), lg = ctx.log || {};
+  for (const e of r.eggs) e.cycle = { acqRun: r.runIndex, acqActive: l.activeMs };
+  const prev = l.runs[l.runs.length - 1];
+  const loopReal = prev ? (lg.departActive - prev.departActive) : lg.departActive;
+  l.runs.push({
+    runIndex: r.runIndex, at: new Date().toISOString(), by: r.by, mode: r.mode, forced: r.forced, departActive: lg.departActive,
+    loopRealMin: minutes(loopReal), loopTotalMin: Math.round((minutes(loopReal) + CONFIG.virtualRunMinutes) * 100) / 100,
+    visitIndex: lg.visitIndex, cardArchetype: lg.cardArchetype, cardHasBang: lg.cardHasBang, cardHasTracked: lg.cardHasTracked,
+    boardArchetypes: lg.boardArchetypes, boardHadBang: lg.boardHadBang, region: r.card.region, danger: r.card.danger,
+    detailOpens: lg.detailOpens, tracks: lg.tracks, stakeReveal: lg.stakeReveal, stakeReroll: lg.stakeReroll,
+    partySize: r.party.length, greed: r.greed, attempted: r.attempted, success: r.eggs.length > 0,
+    eggs: r.eggs.map(e => e.species + (e.damaged ? '(손상)' : '')).join(' '), newlySeen: r.newlySeen.join(' '),
+    downs: r.downs.length, deaths: r.deaths.length, lostFruits: r.lostFruits.reduce((a, x) => a + x.fruits.length, 0),
+    rare: Object.entries(r.rare).map(([k, v]) => `${k}:${v}`).join(' '), hatched: r.hatched.map(h => h.species).join(' '), tag: r.tag,
+    modules: modulesSnap(),
+  });
+});
+hatchHooks.push((m, egg) => { if (m.cycle) { m.cycle.hatchRun = W().runCount; m.cycle.hatchActive = L().activeMs; } });
+
+// ---------- 기록 화면 ----------
+const avg = a => a.length ? Math.round(a.reduce((x, y) => x + y, 0) / a.length * 10) / 10 : '—';
+const rate = (n, d) => d ? `${Math.round(n / d * 100)}% (${n}/${d})` : '—';
+addScreen('log', '기록', () => {
+  const l = L(), runs = l.runs, visits = l.visits, cycles = l.cycles;
+  const tried = runs.filter(r => r.attempted);
+  const cur = l.curVisit;
+  const actCount = obj => Object.entries(obj).map(([k, v]) => `${ACTION_LABEL[k] || k} ${v}`).join(', ');
+  const vRows = visits.slice(-12).reverse().map(v => `<tr><td>#${v.index}</td><td>${v.durationMin}분</td><td>${v.meaningful} <span class="dim">/ 전체 ${v.total}</span></td><td>${v.distinctMeaningful}</td><td class="dim">${actCount(v.actions) || '—'}</td></tr>`).join('');
+  const rRows = runs.slice(-12).reverse().map(r => `<tr><td>#${r.runIndex}</td><td>${CONFIG.board.archetypes[r.cardArchetype]?.label || ''}${r.cardHasBang ? ' <span class="bang">!</span>' : ''}${r.cardHasTracked ? ' 📍' : ''}</td>
+    <td>${r.attempted ? (r.success ? '<span class="ok">성공</span>' : '<span class="bad">실패</span>') : '<span class="dim">빈 런</span>'}</td><td>${r.deaths ? `<span class="bad">사망 ${r.deaths}</span>` : ''} ${r.downs ? `다운 ${r.downs}` : ''}</td>
+    <td>${r.detailOpens}</td><td>${r.loopTotalMin}분</td><td class="tag">${esc(r.tag)}</td></tr>`).join('');
+  const cRows = cycles.slice(-12).reverse().map(c => `<tr><td>${esc(c.monster)}</td><td>#${c.acquiredRun} → #${c.hatchedRun ?? '?'} → #${c.deployedRun}</td><td>${c.realMin}분 + ${c.virtualMin}분</td><td class="${c.within30 ? 'ok' : 'bad'}"><b>${c.totalMin}분</b></td></tr>`).join('');
+  const pend = W().monsters.filter(m => m.cycle && !m.cycle.done).length + W().eggs.filter(e => e.cycle).length + W().plots.filter(p => p && p.type === 'hatch' && p.egg.cycle).length;
+  return `<h2>테스트 기록</h2>
+  <div class="row" style="margin-bottom:10px"><button class="primary" data-act="exportLog" data-f="json">JSON 내보내기</button>
+    <button data-act="exportLog" data-f="runs">런 CSV</button><button data-act="exportLog" data-f="visits">거점 방문 CSV</button><button data-act="exportLog" data-f="cycles">사이클 CSV</button>
+    <button class="small" data-act="resetLog" style="margin-left:auto">기록만 초기화</button></div>
+  <div class="dim" style="margin-bottom:8px">누적 실제 플레이 ${minutes(l.activeMs)}분 · 런 ${runs.length}회(시도 ${tried.length}) · 가상 런 시간 ${CONFIG.virtualRunMinutes}분/회 · 현재 ${moduleSummary()}</div>
+  <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(260px,1fr))">
+    <div class="card"><h3 style="margin-top:0">Q1. 훔치기→부화→재투입 30분 안?</h3>
+      <div>완료 사이클 <b>${cycles.length}</b> · 30분 이내 <b>${rate(cycles.filter(c => c.within30).length, cycles.length)}</b></div>
+      <div>평균 ${avg(cycles.map(c => c.totalMin))}분 · 진행 중 ${pend}개</div>
+      <div class="dim" style="font-size:12px">런 1회 루프(출동→다음 출동) 평균 ${avg(runs.map(r => r.loopTotalMin))}분</div></div>
+    <div class="card"><h3 style="margin-top:0">Q2. 거점 방문당 의미 있는 선택</h3>
+      <div>방문 <b>${visits.length}</b>회 · 평균 의미 있는 행동 <b>${avg(visits.map(v => v.meaningful))}</b> · 평균 종류 ${avg(visits.map(v => v.distinctMeaningful))}</div>
+      <div>행동 0회 방문 ${rate(visits.filter(v => !v.meaningful).length, visits.length)}</div>
+      <div class="dim" style="font-size:12px">이번 방문 진행 중: ${cur ? `${cur.seq.filter(t => MEANINGFUL.includes(t)).length}회` : '—'}</div></div>
+    <div class="card"><h3 style="margin-top:0">Q3. 특정 알을 노리고 맵을 고르나?</h3>
+      <div><span class="bang">!</span> 카드가 보드에 있을 때 그 카드를 고른 비율 <b>${rate(runs.filter(r => r.boardHadBang && r.cardHasBang).length, runs.filter(r => r.boardHadBang).length)}</b></div>
+      <div>고른 카드 유형: ${['collect', 'material', 'safe', 'explore'].map(a => `${CONFIG.board.archetypes[a].label} ${runs.filter(r => r.cardArchetype === a).length}`).join(' · ')}</div>
+      <div>추적 알이 확정 둥지인 카드 선택 ${runs.filter(r => r.cardHasTracked).length}회</div>
+      <div class="dim" style="font-size:12px">상세 열기 ${l.counters.detailOpens} · 추적 ${l.counters.tracks} · 판돈 공개 ${l.counters.stakeReveal} / 다시 뽑기 ${l.counters.stakeReroll}</div></div>
+  </div>
+  <div class="card" style="margin-top:10px"><h3 style="margin-top:0">사이클</h3><table><tr><th>몬스터</th><th>획득→부화→출동 런</th><th>실제+가상</th><th>합계</th></tr>${cRows || '<tr><td colspan="4" class="dim">완료된 사이클 없음</td></tr>'}</table></div>
+  <div class="card" style="margin-top:10px"><h3 style="margin-top:0">거점 방문 (최근 12)</h3><table><tr><th>#</th><th>시간</th><th>의미 있는 행동</th><th>종류</th><th>내역</th></tr>${vRows || '<tr><td colspan="5" class="dim">기록 없음</td></tr>'}</table></div>
+  <div class="card" style="margin-top:10px"><h3 style="margin-top:0">런 (최근 12)</h3><table><tr><th>#</th><th>카드</th><th>결과</th><th>손실</th><th>상세 열기</th><th>루프</th><th>사건</th></tr>${rRows || '<tr><td colspan="7" class="dim">기록 없음</td></tr>'}</table></div>`;
+}, 70);
+
+function toCsv(rows, cols) {
+  const cell = v => { v = v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v); return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v; };
+  return '﻿' + [cols.join(','), ...rows.map(r => cols.map(c => cell(typeof c === 'string' && c.includes('.') ? c.split('.').reduce((o, k) => o?.[k], r) : r[c])).join(','))].join('\n');
+}
+const MOD_COLS = ['modules.residual', 'modules.abilityMode', 'modules.laborMode', 'modules.runMode'];
+ACT.exportLog = d => {
+  const l = L(), seed = W().seed;
+  if (d.f === 'json') return download(`nest-log-${seed}.json`, JSON.stringify({ exportedAt: new Date().toISOString(), worldId: W().id, seed, config: { virtualRunMinutes: CONFIG.virtualRunMinutes }, log: l,
+    worldSummary: { runCount: W().runCount, triedRunCount: W().triedRunCount, hqLevel: W().hqLevel, monsters: W().monsters.length, codex: W().codex, residual: W().residual, modules: W().modules } }, null, 1), 'application/json');
+  if (d.f === 'runs') return download(`nest-runs-${seed}.csv`, toCsv(l.runs, ['runIndex', 'at', 'by', 'mode', 'forced', 'visitIndex', 'cardArchetype', 'cardHasBang', 'cardHasTracked', 'boardArchetypes', 'boardHadBang', 'region', 'danger',
+    'detailOpens', 'tracks', 'stakeReveal', 'stakeReroll', 'partySize', 'greed', 'attempted', 'success', 'eggs', 'newlySeen', 'downs', 'deaths', 'lostFruits', 'rare', 'hatched', 'loopRealMin', 'loopTotalMin', 'tag', ...MOD_COLS]), 'text/csv');
+  if (d.f === 'visits') {
+    const types = Object.keys(ACTION_LABEL);
+    const rows = l.visits.map(v => ({ ...v, ...Object.fromEntries(types.map(t => ['a_' + t, v.actions[t] || 0])) }));
+    return download(`nest-visits-${seed}.csv`, toCsv(rows, ['index', 'by', 'afterRun', 'runAfter', 'startedAt', 'durationMin', 'meaningful', 'distinctMeaningful', 'total', ...types.map(t => 'a_' + t), ...MOD_COLS]), 'text/csv');
+  }
+  if (d.f === 'cycles') return download(`nest-cycles-${seed}.csv`, toCsv(l.cycles, ['index', 'monster', 'species', 'eggTag', 'acquiredRun', 'hatchedRun', 'deployedRun', 'runsBetween', 'realMin', 'virtualMin', 'totalMin', 'within30', ...MOD_COLS]), 'text/csv');
+};
+ACT.resetLog = () => { if (!confirm('테스트 기록만 지웁니다(월드 진행은 유지).')) return; S.log = newLog(); afterChange(); toast('기록 초기화'); };
+onNewGameHooks.push(() => startVisit());
+baseBanners.push(() => { const v = L().curVisit; return v ? `<div class="dim" style="font-size:12px;margin:-4px 0 8px">거점 방문 #${v.index} · 이번 방문 행동 ${v.seq.filter(t => MEANINGFUL.includes(t)).length}회</div>` : ''; });
+
+/* =====================================================================
    부팅
    ===================================================================== */
 function boot() {
@@ -1454,6 +1609,7 @@ function boot() {
   if (saved && saved.world) { try { S = migrate(saved); } catch (e) { S = null; } }
   if (!S) newGame(CONFIG.defaultSeed);
   if (!W().board) generateBoard();
+  startVisit();
   render();
 }
 window.addEventListener('DOMContentLoaded', boot);
