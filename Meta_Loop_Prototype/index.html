@@ -44,6 +44,12 @@ table{border-collapse:collapse;width:100%} td,th{border-bottom:1px solid var(--l
 #toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#000c;border:1px solid var(--line);padding:6px 14px;border-radius:8px;display:none;z-index:30}
 .mon{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel2)}
 .mon .nm{font-weight:700}
+.nests{display:inline-flex;gap:6px;align-items:center}
+.nest{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:50%;font-weight:900;font-size:17px;border:2px solid var(--line);background:var(--panel2)}
+.nest.own{color:var(--ok);border-color:var(--ok)}
+.nest.unk{color:var(--dim)}
+.nest.bang{color:#fff;background:var(--bang);border-color:var(--bang);width:40px;height:40px;font-size:24px;box-shadow:0 0 10px #ff5d7388}
+.danger{color:var(--bad);letter-spacing:2px}
 .stat{font-family:ui-monospace,monospace;font-size:12px;color:var(--dim)}
 </style>
 </head>
@@ -114,6 +120,17 @@ const CONFIG = {
 
   // ---------- 런 성향 값 ----------
   stats: { inf: '침입', car: '운반', rea: '대응' },
+
+  // ---------- 위험 요소 (카드 위험도 1당 1개) ----------
+  // stat: 이 위험 요소가 깎는 판정(침입=잠입, 대응=알 집기, 운반=도주). phrase: 사건 태그용 문구
+  hazards: [
+    { id: 'guards', name: '경비가 촘촘함',       stat: 'inf', phrase: '촘촘한 경비를 뚫고 나오다' },
+    { id: 'lights', name: '조명이 밝음',         stat: 'inf', phrase: '탐조등을 피해 달아나다' },
+    { id: 'chaser', name: '추격자가 빠름',       stat: 'car', phrase: '빠른 추격자를 따돌리다' },
+    { id: 'doors',  name: '봉쇄 문이 많음',      stat: 'car', phrase: '닫히는 봉쇄 문을 비집고 나오다' },
+    { id: 'traps',  name: '둥지 주변 함정',      stat: 'rea', phrase: '함정을 피해 구르다' },
+    { id: 'alarm',  name: '경보 장치가 예민함',  stat: 'rea', phrase: '경보 속을 내달리다' },
+  ],
 
   // 능력 사전. stat = 런 성향 값 가산, fx = 특수 효과
   //   fx.bag: 가방칸 +n / fx.revive: 동료 소생 확률 +p / fx.witness: 다른 둥지 목격 확률 +p / fx.guard: 파티 다운 확률 -p
@@ -246,7 +263,7 @@ const CONFIG = {
   // ---------- 사건 태그 문구 ----------
   tags: {
     clean:     '경비의 틈으로 조용히 빼낸 알',
-    chaseCrack:'{hazard} 속에서 도망치다 금이 간 알',
+    chaseCrack:'{phrase} 금이 간 알',
     crack:     '도주 중 바닥에 부딪혀 금이 간 알',
     loss:      '{name}을(를) 잃고 지켜낸 알',
     revived:   '쓰러진 동료를 끌고 나온 알',
@@ -613,12 +630,411 @@ function logDebug(kind, detail) { S.log.events.push({ t: new Date().toISOString(
 function afterChange() { persist(); render(); }
 
 /* =====================================================================
+   [2] 런 스텁 · 결과 정산
+   ===================================================================== */
+const HAZARD = Object.fromEntries(CONFIG.hazards.map(h => [h.id, h]));
+function residualLevel(k) { return W().modules.residual ? (W().residual[k] || 0) : 0; }
+const regionIndex = id => CONFIG.regions.findIndex(r => r.id === id);
+// 입장 비용: 지역 1은 무료, 지역 N은 지역 N-1의 고급 재료 × entryCost (잔성장 할인 반영)
+function entryCostFor(regionId) {
+  const i = regionIndex(regionId); if (i <= 0) return {};
+  const n = CONFIG.regions[i].entryCost - residualLevel('discount');
+  return n > 0 ? { [CONFIG.regions[i - 1].rare]: n } : {};
+}
+
+/* 카드 사양. 생성할 때 전부 확정하고, 런은 이 사양대로만 굴립니다.
+   card = { id, archetype, region, name, theme, danger, hazards[], rare, rareAmount, greedBonus,
+            nests: [{ kind: 'confirmed'|'trace'|'unknown', species, revealed }] } */
+function buildCard(spec) {
+  const at = CONFIG.board.archetypes[spec.archetype], reg = REGION[spec.region];
+  const danger = spec.danger ?? at.danger;
+  return {
+    id: nid('c'), archetype: spec.archetype, region: reg.id,
+    name: `${reg.name} · ${pick(reg.facilities, 'board')}`, theme: reg.theme,
+    danger, hazards: shuffle(CONFIG.hazards, 'board').slice(0, danger).map(h => h.id),
+    rare: reg.rare, rareAmount: at.rareAmount, greedBonus: CONFIG.board.greedRareBonus,
+    nests: spec.nests.map(n => ({ kind: n.kind, species: n.species, revealed: false })),
+  };
+}
+// 둥지 표시: ✓ 획득 / ! 목격(미획득) / ? 미확인
+function nestView(n) {
+  const st = W().codex[n.species];
+  if (n.kind === 'confirmed' || n.revealed) {
+    if (st === 'owned') return { sym: '✓', cls: 'own', label: eggName(n.species) };
+    return { sym: '!', cls: 'bang', label: eggName(n.species) };
+  }
+  if (n.kind === 'trace') return { sym: '?', cls: 'unk', label: `${REGION[SPECIES[n.species].regions[0]].family} 계열의 무언가` };
+  return { sym: '?', cls: 'unk', label: '알 수 없음' };
+}
+const nestPriority = n => { const v = nestView(n); return v.sym === '!' ? 0 : v.sym === '?' ? 1 : 2; };
+function targetOrder(card, first) {
+  const idx = card.nests.map((_, i) => i).filter(i => i !== first).sort((a, b) => nestPriority(card.nests[a]) - nestPriority(card.nests[b]));
+  return first != null && card.nests[first] ? [first, ...idx] : idx;
+}
+function partyPower(mons) {
+  const p = { inf: 0, car: 0, rea: 0, bag: 0, revive: 0, witness: 0, guard: 0 };
+  for (const m of mons) { const q = monPower(m); for (const k in p) p[k] += q[k]; }
+  return p;
+}
+function bagCapacity(pw) { return CONFIG.run.baseBag + pw.bag + residualLevel('bag'); }
+
+// ---------- 확률 모드 ----------
+function resolveRunProb(ctx) {
+  const C = CONFIG.run, L = C.locked, card = ctx.card, party = ctx.party, forced = W().forceNext;
+  const out = { attempted: ctx.attempted, eggs: [], witnessed: [], members: {}, events: [], noise: 0, flags: {}, probs: {} };
+  party.forEach(m => out.members[m.id] = 'ok');
+  if (forced === 'empty') out.attempted = false;
+  if (!out.attempted) return out;
+  const pw = partyPower(party), req = C.dangerReq[card.danger];
+  const hz = card.hazards.map(id => HAZARD[id]);
+  const step = (stat, base, extra = 0) => {
+    let p = base + (pw[stat] - req) * C.perPoint + extra;
+    for (const h of hz) if (h.stat === stat && pw[stat] < req + C.hazardCounterMargin) p -= C.hazardPenalty;
+    return clamp(p, C.pMin, C.pMax);
+  };
+  const roll = (p, key) => { out.probs[key] = p; if (forced === 'perfect') return true; if (forced === 'fail' || forced === 'wipe') return false; return chance(p, 'run'); };
+  out.noise += hz.length * C.noise.hazard;
+  if (ctx.greed) out.noise += C.noise.greed;
+  // 1) 잠입
+  if (!roll(step('inf', C.base.infil), '잠입')) { out.flags.alarm = true; out.noise += C.noise.alarm; out.events.push('잠입 중 경보가 울렸다'); }
+  // 2) 알 집기 — 목표 둥지는 반드시 목격
+  const targets = targetOrder(card, ctx.targetIdx).slice(0, ctx.greed ? 2 : 1);
+  out.bagCap = bagCapacity(pw);
+  let used = 0;
+  targets.forEach((ti, k) => {
+    const n = card.nests[ti]; out.witnessed.push(n.species);
+    const sz = rollEggSize(n.species), slots = C.sizeSlots[sz.size];
+    if (used + slots > out.bagCap) { out.flags.bagFull = true; out.events.push(`가방이 가득 차 ${eggName(n.species)}을(를) 두고 왔다`); return; }
+    let extra = 0; if (k > 0) extra -= C.greedGrabPenalty; if (out.flags.alarm) extra -= C.alarmGrabPenalty;
+    if (roll(step('rea', C.base.grab, extra), k === 0 ? '알 집기' : '두 번째 알 집기')) { used += slots; out.eggs.push({ nestIdx: ti, species: n.species, ...sz, damaged: false }); }
+    else out.events.push(`${nestView(n).sym === '?' ? '미확인' : eggName(n.species)} 둥지에서 알을 집지 못했다`);
+  });
+  // 목표가 아닌 둥지도 확률로 목격 (실패한 런도 정보를 남김)
+  card.nests.forEach((n, i) => { if (!targets.includes(i) && chance(Math.min(1, C.witnessOther + pw.witness), 'run')) out.witnessed.push(n.species); });
+  // 3) 도주 (알을 들고 있을 때만)
+  if (out.eggs.length) {
+    const extra = -out.eggs.reduce((a, e) => a + L.eggCarryPenalty[e.size], 0) - (out.eggs.length > 1 ? C.greedEscapePenalty : 0) + residualLevel('dash') * C.dashEscape;
+    if (!roll(step('car', C.base.escape, extra), '도주')) {
+      out.flags.escFail = true; out.noise += C.noise.escapeFail;
+      const e = out.eggs[out.eggs.length - 1];
+      if (chance(C.escapeFailDrop, 'run')) { out.eggs.pop(); out.flags.dropped = true; out.events.push(`추격에 쫓겨 ${eggName(e.species)}을(를) 떨어뜨렸다`); }
+      else { e.damaged = true; out.events.push(`도주 중 ${eggName(e.species)}에 금이 갔다`); }
+    }
+  }
+  // 4) 다운 · 소생
+  out.flags.noiseOver = out.noise >= L.noiseThreshold;
+  if (out.flags.noiseOver) out.events.push('소란이 커져 증원이 도착했다');
+  const carrying = out.eggs.length > 0;
+  for (const m of party) {
+    const mp = monPower(m);
+    let pd = C.downBase[card.danger] * (carrying ? L.eggDetectMult : 1)
+      + (out.flags.alarm ? C.downAlarm : 0) + (out.flags.escFail ? C.downEscapeFail : 0) + (ctx.greed ? C.downGreed : 0)
+      + (out.flags.noiseOver ? C.downNoiseOver : 0) - mp.rea * C.downReaPerPoint - pw.guard - residualLevel('dash') * C.dashDown;
+    pd = clamp(pd, 0.01, 0.9);
+    out.probs['다운(' + m.name + ')'] = pd;
+    let down = forced === 'wipe' ? true : forced === 'perfect' ? false : chance(pd, 'run');
+    if (!down) continue;
+    const pr = clamp(C.reviveBase + pw.revive + residualLevel('revive') * C.revivePerLevel, 0, 0.95);
+    out.probs['소생'] = pr;
+    out.members[m.id] = forced === 'wipe' ? 'dead' : chance(pr, 'run') ? 'down' : 'dead';
+  }
+  if (party.every(m => out.members[m.id] === 'dead')) {
+    out.flags.wiped = true;
+    if (out.eggs.length) out.events.push('파티가 전멸해 들고 있던 알을 모두 잃었다');
+    out.eggs = [];
+  }
+  return out;
+}
+
+// ---------- 진행자 모드 ----------
+function defaultGm(card, party) {
+  return { attempted: true, nests: card.nests.map(() => ({ grab: false, damaged: false, witness: false, size: 'auto' })),
+    members: Object.fromEntries(party.map(m => [m.id, 'ok'])), tag: '' };
+}
+function resolveRunGM(ctx) {
+  const g = UI.gm, card = ctx.card;
+  const out = { attempted: g.attempted, eggs: [], witnessed: [], members: {}, events: ['진행자 모드로 결과를 지정했다'], noise: 0, flags: {}, probs: {}, gmTag: g.tag.trim() };
+  ctx.party.forEach(m => out.members[m.id] = g.members[m.id] || 'ok');
+  if (!out.attempted) { ctx.party.forEach(m => out.members[m.id] = 'ok'); return out; }
+  card.nests.forEach((n, i) => {
+    const c = g.nests[i];
+    if (c.grab || c.witness) out.witnessed.push(n.species);
+    if (!c.grab) return;
+    const base = SPECIES[n.species].eggSize, size = c.size === 'auto' ? base : c.size;
+    const order = ['S', 'M', 'L'];
+    out.eggs.push({ nestIdx: i, species: n.species, size, sizeDelta: Math.sign(order.indexOf(size) - order.indexOf(base)), damaged: c.damaged });
+    if (c.damaged) out.flags.escFail = true;
+  });
+  if (ctx.party.every(m => out.members[m.id] === 'dead')) out.flags.wiped = true;
+  return out;
+}
+
+// ---------- 사건 태그 ----------
+function fillTpl(t, vars) { return t.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? ''); }
+function makeTag(out, card, party) {
+  const T = CONFIG.tags;
+  if (out.gmTag) return out.gmTag;
+  if (!out.attempted) return T.empty;
+  const dead = party.filter(m => out.members[m.id] === 'dead');
+  if (out.eggs.length) {
+    if (dead.length && !out.flags.wiped) return fillTpl(T.loss, { name: dead[0].name });
+    if (out.eggs.some(e => e.damaged)) {
+      const h = card.hazards.map(id => HAZARD[id]).find(h => h.stat === 'car');
+      return h ? fillTpl(T.chaseCrack, { phrase: h.phrase }) : T.crack;
+    }
+    if (out.flags.alarm) return T.alarm;
+    if (out.eggs.length >= 2) return T.greed;
+    if (party.some(m => out.members[m.id] === 'down')) return T.revived;
+    return T.clean;
+  }
+  if (out.flags.wiped) return T.noEggWipe;
+  if (out.flags.dropped) return T.noEggDrop;
+  if (out.flags.alarm) return T.noEggAlarm;
+  return T.noEggMiss;
+}
+
+// ---------- 출동 → 정산 ----------
+const beforeRunHooks = [];   // (ctx) — 출동 직전 (기록용)
+const afterRunHooks = [];    // (result, ctx, out) — 시도한 런이면 생산·부화·보드 갱신 등
+const killHooks = [];        // (monster) — 사망 시 작업 슬롯 정리 등
+
+function currentCard() { const b = W().board; return b && b.cards.find(c => c.id === UI.cardId) || null; }
+function partyMons() { return UI.party.map(getMon).filter(Boolean); }
+function departCheck() {
+  const card = currentCard(), party = partyMons();
+  if (!card) return '맵 카드를 고르세요.';
+  if (!party.length) return '파티에 몬스터를 1마리 이상 넣으세요.';
+  if (party.length > CONFIG.partyMax) return `파티는 최대 ${CONFIG.partyMax}마리입니다.`;
+  if (!canPay(entryCostFor(card.region))) return '입장 재료가 부족합니다.';
+  return null;
+}
+function depart() {
+  const err = departCheck(); if (err) { toast(err); return; }
+  const w = W(), card = currentCard(), party = partyMons();
+  const cost = entryCostFor(card.region); pay(cost);
+  const ctx = { card, party, partyIds: party.map(m => m.id), greed: UI.greed, attempted: UI.plan === 'raid', targetIdx: UI.target, cost };
+  if (w.modules.runMode === 'gm') ctx.attempted = UI.gm.attempted;
+  beforeRunHooks.forEach(f => f(ctx));
+  const out = w.modules.runMode === 'gm' ? resolveRunGM(ctx) : resolveRunProb(ctx);
+  const r = settleRun(ctx, out);
+  w.forceNext = 'none';
+  UI.party = UI.party.filter(id => getMon(id));
+  UI.cardId = null; UI.greed = false; UI.plan = 'raid'; UI.target = 0; UI.gm = null;
+  persist(); go('result');
+  return r;
+}
+function settleRun(ctx, out) {
+  const w = W(), card = ctx.card;
+  w.runCount++;
+  if (out.attempted) w.triedRunCount++;
+  const tag = makeTag(out, card, ctx.party);
+  const r = {
+    runIndex: w.runCount, by: actor(), mode: w.modules.runMode, forced: w.forceNext,
+    card: { id: card.id, name: card.name, archetype: card.archetype, region: card.region, danger: card.danger, hazards: card.hazards.slice(),
+      nests: card.nests.map(n => ({ ...n, sym: nestView(n).sym })) },
+    cost: ctx.cost, greed: ctx.greed, attempted: out.attempted, party: ctx.party.map(m => ({ id: m.id, name: m.name })),
+    tag, events: out.events, probs: out.probs, bagCap: out.bagCap,
+    eggs: [], newlySeen: [], downs: [], deaths: [], lostFruits: [], rare: {}, unlocks: [], prod: null, hatched: [], boardRefreshed: false,
+  };
+  for (const e of out.eggs) {
+    const egg = { id: nid('e'), species: e.species, size: e.size, sizeDelta: e.sizeDelta, damaged: e.damaged, tag,
+      acquiredRun: w.runCount, acquiredBy: actor(), from: card.name };
+    w.eggs.push(egg); r.eggs.push(egg);
+  }
+  for (const s of new Set(out.witnessed)) if (w.codex[s] === 'unseen') { w.codex[s] = 'seen'; r.newlySeen.push(s); }
+  for (const m of ctx.party) {
+    m.runs++;
+    const st = out.members[m.id];
+    if (st === 'down') r.downs.push(m.name);
+    if (st === 'dead') { r.deaths.push(m.name); if (m.fruits.length) r.lostFruits.push({ name: m.name, fruits: m.fruits.slice() }); killMonster(m, `런 #${w.runCount} ${card.name}에서 사망`); }
+  }
+  if (out.attempted) {
+    const before = unlockedRegions();
+    let n = card.rareAmount; if (ctx.greed && !out.flags.wiped) n += card.greedBonus;
+    gain(card.rare, n); r.rare[card.rare] = n;
+    r.unlocks = unlockedRegions().filter(id => !before.includes(id));
+  }
+  r.flags = out.flags;
+  w.lastResult = r;
+  afterRunHooks.forEach(f => f(r, ctx, out));
+  return r;
+}
+function killMonster(m, note) {
+  const w = W();
+  w.monsters = w.monsters.filter(x => x.id !== m.id);
+  m.deathNote = note; m.diedRun = w.runCount; w.graveyard.push(m);
+  killHooks.forEach(f => f(m));
+}
+// 지역 해금: 지역 1은 항상, 지역 N은 지역 N-1 고급 재료를 한 번이라도 얻었으면
+function unlockedRegions() {
+  return CONFIG.regions.filter((r, i) => i === 0 || W().rareEver[CONFIG.regions[i - 1].rare]).map(r => r.id);
+}
+
+// ---------- 출동 준비 화면 ----------
+Object.assign(UI, { party: [], greed: false, plan: 'raid', target: 0, cardId: null, gm: null });
+function dangerDots(d) { return '●'.repeat(d) + '○'.repeat(3 - d); }
+function nestIconsHtml(card, big = true) {
+  return card.nests.map(n => { const v = nestView(n); return `<span class="nest ${v.cls}" title="${esc(v.label)}">${v.sym}</span>`; }).join('');
+}
+const prepPanels = [];   // 추가 패널 (단계별)
+function workingLabel(m) { return typeof workStatus === 'function' ? workStatus(m) : ''; }
+addScreen('prep', '출동 준비', () => {
+  const card = currentCard(), w = W();
+  if (!card) return `<h2>출동 준비</h2><div class="card">먼저 <button data-act="go" data-to="burrow">두더지 굴</button>에서 맵 카드를 고르세요.</div>`;
+  const party = partyMons(), pw = partyPower(party), req = CONFIG.run.dangerReq[card.danger];
+  if (UI.target >= card.nests.length) UI.target = 0;
+  const statRow = ['inf', 'rea', 'car'].map(s => {
+    const hz = card.hazards.map(id => HAZARD[id]).filter(h => h.stat === s);
+    const cleared = pw[s] >= req + CONFIG.run.hazardCounterMargin;
+    return `<tr><td>${CONFIG.stats[s]} (${s === 'inf' ? '잠입' : s === 'rea' ? '알 집기' : '도주'})</td><td><b class="${pw[s] >= req ? 'ok' : 'warn'}">${pw[s]}</b> / 기준 ${req}</td>
+      <td>${hz.map(h => `<span class="${cleared ? 'ok' : 'bad'}">${h.name}${cleared ? ' (상쇄)' : ''}</span>`).join(', ') || '<span class="dim">—</span>'}</td></tr>`;
+  }).join('');
+  const roster = w.monsters.map(m => {
+    const inP = UI.party.includes(m.id);
+    const full = !inP && UI.party.length >= CONFIG.partyMax;
+    const fruitBtns = m.fruits.length < CONFIG.fruitSlots ? Object.entries(CONFIG.fruits).map(([fid, f]) =>
+      `<button class="small" data-act="equip" data-m="${m.id}" data-f="${fid}" ${canPay(f.cost) ? '' : 'disabled'} title="${esc(costPlain(f.cost))}">+${f.name}</button>`).join('') : '<span class="dim">열매 칸 가득</span>';
+    return `<div class="col" style="gap:3px;${inP ? 'outline:2px solid var(--accent);border-radius:8px' : ''}">
+      ${monChip(m, `<button class="small ${inP ? 'on' : ''}" data-act="toggleParty" data-m="${m.id}" ${full ? 'disabled' : ''}>${inP ? '파티에서 빼기' : '파티에 넣기'}</button> <span class="dim">${workingLabel(m)}</span>`)}
+      <div class="row" style="margin-left:8px;font-size:12px">열매 ${m.fruits.length}/${CONFIG.fruitSlots}: ${fruitBtns}</div></div>`;
+  }).join('');
+  const gm = w.modules.runMode === 'gm' ? gmPanel(card, party) : '';
+  const cost = entryCostFor(card.region);
+  const err = departCheck();
+  return `<h2>출동 준비</h2>
+  <div class="card"><div class="row"><b style="font-size:16px">${esc(card.name)}</b><span class="pill acc">${CONFIG.board.archetypes[card.archetype].label}</span>
+    <span class="dim">${esc(card.theme)}</span></div>
+    <div class="row" style="margin-top:6px"><span class="nests">${nestIconsHtml(card)}</span>
+    <span>위험도 <b class="danger">${dangerDots(card.danger)}</b></span><span>입장 ${costText(cost)}</span>
+    <span>고급 재료 ${resLabel(card.rare)} ×${card.rareAmount} <span class="dim">(+${card.greedBonus} 탐욕·생존 귀환 시)</span></span></div></div>
+  <div class="grid" style="grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);margin-top:10px">
+    <div class="card"><h3>파티 편성 (${party.length}/${CONFIG.partyMax})</h3><div class="col">${roster || '<span class="dim">몬스터가 없습니다.</span>'}</div></div>
+    <div class="col">
+      <div class="card"><h3>파티 성향 vs 위험도</h3><table>${statRow}</table>
+        <div class="dim" style="margin-top:4px">가방 ${bagCapacity(pw)}칸 (소·중 1칸, 대 2칸) · 위험 요소는 해당 성향이 기준+${CONFIG.run.hazardCounterMargin} 이상이면 상쇄</div></div>
+      <div class="card"><h3>작전</h3>
+        <div class="row"><button class="${UI.plan === 'raid' ? 'on' : ''}" data-act="setPlan" data-v="raid">둥지 공략</button>
+          <button class="${UI.plan === 'escape' ? 'on' : ''}" data-act="setPlan" data-v="escape">즉시 탈출 (빈 런)</button></div>
+        <div class="dim" style="margin:4px 0">빈 런은 생산·부화 진행·보드 갱신·고급 재료를 받지 못합니다.</div>
+        <div class="row">목표 둥지 <select data-chg="target">${card.nests.map((n, i) => { const v = nestView(n); return `<option value="${i}" ${UI.target === i ? 'selected' : ''}>${v.sym} ${esc(v.label)}</option>`; }).join('')}</select></div>
+        <div class="row" style="margin-top:6px"><label><input type="checkbox" data-chg="greed" ${UI.greed ? 'checked' : ''}> 알을 하나 더 노린다 (탐욕)</label></div>
+        <div class="dim">탐욕: 두 번째 둥지까지 노림 · 고급 재료 +${card.greedBonus} · 다운 위험 증가</div>
+      </div>
+      ${prepPanels.map(f => f(card, party)).join('')}
+      ${gm}
+      <div class="card"><div class="row"><button class="primary" data-act="depart" ${err ? 'disabled' : ''}>출동!</button>
+        <span class="${err ? 'bad' : 'dim'}">${err || '입장 비용 ' + costText(cost)}</span></div></div>
+    </div></div>`;
+}, 20);
+function costPlain(cost) { return Object.entries(cost).map(([k, v]) => `${ALL_RES[k].name}×${v}`).join(', '); }
+const visitActionHooks = [];   // (type, detail) — 거점 방문 중 플레이어 행동 기록용
+function playerAction(type, detail) { visitActionHooks.forEach(f => f(type, detail)); }
+ACT.toggleParty = d => {
+  const i = UI.party.indexOf(d.m);
+  if (i >= 0) UI.party.splice(i, 1); else if (UI.party.length < CONFIG.partyMax) UI.party.push(d.m);
+  playerAction('party', d.m); UI.gm = null; render();
+};
+ACT.equip = d => {
+  const m = getMon(d.m), f = CONFIG.fruits[d.f];
+  if (!m || m.fruits.length >= CONFIG.fruitSlots || !canPay(f.cost)) return;
+  if (!confirm(`${m.name}에게 ${f.name}을(를) 장착합니다. 해제할 수 없고, 죽으면 함께 사라집니다.`)) return;
+  pay(f.cost); m.fruits.push(d.f); playerAction('equip_fruit', d.f); afterChange();
+};
+ACT.setPlan = d => { UI.plan = d.v; render(); };
+CHG.target = (d, el) => { UI.target = +el.value; render(); };
+CHG.greed = (d, el) => { UI.greed = el.checked; render(); };
+ACT.depart = () => depart();
+
+function gmPanel(card, party) {
+  if (!UI.gm || UI.gm.cardId !== card.id || UI.gm.members && party.some(m => !(m.id in UI.gm.members))) { UI.gm = defaultGm(card, party); UI.gm.cardId = card.id; }
+  const g = UI.gm;
+  const nests = card.nests.map((n, i) => { const c = g.nests[i];
+    return `<tr><td>${nestView(n).sym} ${esc(eggName(n.species))} <span class="dim">(${nestView(n).label === eggName(n.species) ? '' : '진행자만 보임'})</span></td>
+      <td><label><input type="checkbox" data-chg="gm" data-k="grab" data-i="${i}" ${c.grab ? 'checked' : ''}>획득</label>
+      <label><input type="checkbox" data-chg="gm" data-k="damaged" data-i="${i}" ${c.damaged ? 'checked' : ''}>손상</label>
+      <label><input type="checkbox" data-chg="gm" data-k="witness" data-i="${i}" ${c.witness ? 'checked' : ''}>목격</label>
+      <select data-chg="gm" data-k="size" data-i="${i}">${['auto', 'S', 'M', 'L'].map(s => `<option value="${s}" ${c.size === s ? 'selected' : ''}>${s === 'auto' ? '기본 크기' : CONFIG.eggs.sizes[s]}</option>`).join('')}</select></td></tr>`; }).join('');
+  const mem = party.map(m => `<tr><td>${esc(m.name)}</td><td><select data-chg="gmMem" data-m="${m.id}">${[['ok', '무사'], ['down', '다운 후 소생'], ['dead', '사망']].map(([v, l]) => `<option value="${v}" ${g.members[m.id] === v ? 'selected' : ''}>${l}</option>`).join('')}</select></td></tr>`).join('');
+  return `<div class="card" style="border-color:var(--info)"><h3 style="color:var(--info)">🎬 진행자 결과 입력</h3>
+    <label><input type="checkbox" data-chg="gm" data-k="attempted" ${g.attempted ? 'checked' : ''}> 시도함 (끄면 빈 런)</label>
+    <table style="margin-top:6px">${nests}</table><table style="margin-top:6px">${mem || '<tr><td class="dim">파티를 먼저 편성하세요</td></tr>'}</table>
+    <div class="row" style="margin-top:6px">사건 태그 <input data-chg="gm" data-k="tag" value="${esc(g.tag)}" placeholder="비우면 자동 생성" style="flex:1"></div></div>`;
+}
+CHG.gm = (d, el) => {
+  const g = UI.gm; if (!g) return;
+  if (d.i != null) g.nests[+d.i][d.k] = el.type === 'checkbox' ? el.checked : el.value;
+  else g[d.k] = el.type === 'checkbox' ? el.checked : el.value;
+  if (d.k !== 'tag') render();
+};
+CHG.gmMem = (d, el) => { UI.gm.members[d.m] = el.value; };
+
+// ---------- 결과 정산 화면 ----------
+const resultSections = [];   // (r) => html — 생산 틱·부화 등
+addScreen('result', '결과 정산', () => {
+  const r = W().lastResult;
+  if (!r) return `<h2>결과 정산</h2><div class="card dim">아직 런 기록이 없습니다.</div>`;
+  const ok = r.eggs.length > 0;
+  const eggs = r.eggs.map(e => `<div class="row"><b>${eggName(e.species)}</b><span class="pill">${CONFIG.eggs.sizes[e.size]}${e.sizeDelta > 0 ? ' (평소보다 큼)' : e.sizeDelta < 0 ? ' (평소보다 작음)' : ''}</span>${e.damaged ? '<span class="pill bad">손상</span>' : '<span class="pill ok">온전</span>'}</div>`).join('') || '<span class="dim">없음</span>';
+  const seen = r.newlySeen.map(s => `<span class="pill bang">! ${eggName(s)}</span>`).join(' ') || '<span class="dim">없음</span>';
+  const lost = [...r.deaths.map(n => `<span class="bad">✝ ${esc(n)} 사망</span>`), ...r.downs.map(n => `<span class="warn">${esc(n)} 다운 → 소생</span>`)].join('<br>') || '<span class="ok">전원 무사</span>';
+  const fruits = r.lostFruits.map(l => `${esc(l.name)}: ${l.fruits.map(f => CONFIG.fruits[f].name).join(', ')}`).join('<br>');
+  const rare = Object.entries(r.rare).map(([k, v]) => `${resLabel(k)} ×${v}`).join(', ') || '<span class="dim">없음</span>';
+  const probs = Object.entries(r.probs || {}).map(([k, v]) => `${k} ${pct(v)}`).join(' · ');
+  return `<h2>결과 정산 — 런 #${r.runIndex}</h2>
+  <div class="card" style="border-color:${!r.attempted ? 'var(--line)' : ok ? 'var(--ok)' : 'var(--bad)'}">
+    <div class="row"><b>${esc(r.card.name)}</b><span class="pill acc">${CONFIG.board.archetypes[r.card.archetype].label}</span>
+      <span class="pill">${r.mode === 'gm' ? '진행자 모드' : '확률 모드'}</span>${r.forced && r.forced !== 'none' ? `<span class="pill warn">강제: ${r.forced}</span>` : ''}
+      ${r.attempted ? '' : '<span class="pill bad">시도하지 않은 런</span>'}</div>
+    <p class="tag" style="font-size:16px;margin:8px 0">“${esc(r.tag)}”</p>
+    <table>
+      <tr><th style="width:150px">획득한 알</th><td>${eggs}</td></tr>
+      <tr><th>새로 목격한 알</th><td>${seen}</td></tr>
+      <tr><th>다운 · 사망</th><td>${lost}</td></tr>
+      ${fruits ? `<tr><th>함께 잃은 열매</th><td class="bad">${fruits}</td></tr>` : ''}
+      <tr><th>고급 재료</th><td>${rare}${r.greed ? ' <span class="dim">(탐욕 선택)</span>' : ''}</td></tr>
+      ${r.unlocks.length ? `<tr><th>지역 해금</th><td class="ok">${r.unlocks.map(id => REGION[id].name).join(', ')} 카드가 이제 보드에 나옵니다</td></tr>` : ''}
+      <tr><th>진행</th><td class="dim">${r.events.map(esc).join(' → ') || '—'}</td></tr>
+    </table>
+    ${probs ? `<div class="dim" style="font-size:12px;margin-top:6px">[테스트용] 판정 확률: ${probs}</div>` : ''}
+  </div>
+  ${resultSections.map(f => f(r)).join('')}
+  <div class="row" style="margin-top:12px"><button class="primary" data-act="toBase">거점으로</button></div>`;
+}, 30);
+const toBaseHooks = [];
+ACT.toBase = () => { toBaseHooks.forEach(f => f()); go(SCREENS.base ? 'base' : 'storage'); };
+
+// 디버그: 런 결과 강제
+DEBUG_SECTIONS.push(() => {
+  const opts = [['none', '강제 안 함'], ['perfect', '완벽 성공'], ['fail', '실패(알 없음)'], ['wipe', '전멸'], ['empty', '빈 런']];
+  return `<b>다음 런 결과 강제</b> <span class="dim">(확률 모드)</span><div style="margin-top:4px"><select data-chg="dbgForce">${opts.map(([v, l]) => `<option value="${v}" ${W().forceNext === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>`;
+});
+CHG.dbgForce = (d, el) => { W().forceNext = el.value; logDebug('force', el.value); afterChange(); };
+
+/* ---- [2-임시] 단계 ③(보드) 전까지 쓰는 간이 보드 ---- */
+function generateBoard() {
+  const regs = unlockedRegions(), cards = [];
+  for (let i = 0; i < CONFIG.board.cardCount; i++) {
+    const region = pick(regs, 'board');
+    const pool = CONFIG.species.filter(s => s.regions.includes(region));
+    cards.push(buildCard({ archetype: 'explore', region, nests: [0, 1].map(() => ({ kind: 'unknown', species: pick(pool, 'board').id })) }));
+  }
+  W().board = { cards, gen: (W().board?.gen || 0) + 1 };
+}
+onNewGameHooks.push(() => generateBoard());
+afterRunHooks.push(r => { if (r.attempted) { generateBoard(); r.boardRefreshed = true; } });
+addScreen('burrow', '두더지 굴', () => `<h2>두더지 굴 (임시)</h2><div class="grid" style="grid-template-columns:repeat(3,1fr)">${W().board.cards.map(c =>
+  `<div class="card"><b>${esc(c.name)}</b><div class="nests">${nestIconsHtml(c)}</div><div>위험도 ${dangerDots(c.danger)}</div><button data-act="pickCard" data-id="${c.id}">이 맵으로</button></div>`).join('')}</div>`, 10);
+ACT.pickCard = d => { UI.cardId = d.id; go('prep'); };
+/* ---- [2-임시] 끝 ---- */
+
+/* =====================================================================
    부팅
    ===================================================================== */
 function boot() {
   const saved = Store.load();
   if (saved && saved.world) { try { S = migrate(saved); } catch (e) { S = null; } }
   if (!S) newGame(CONFIG.defaultSeed);
+  if (!W().board) generateBoard();
   render();
 }
 window.addEventListener('DOMContentLoaded', boot);
