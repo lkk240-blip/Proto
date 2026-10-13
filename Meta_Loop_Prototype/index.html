@@ -49,6 +49,9 @@ table{border-collapse:collapse;width:100%} td,th{border-bottom:1px solid var(--l
 .nest.own{color:var(--ok);border-color:var(--ok)}
 .nest.unk{color:var(--dim)}
 .nest.bang{color:#fff;background:var(--bang);border-color:var(--bang);width:40px;height:40px;font-size:24px;box-shadow:0 0 10px #ff5d7388}
+.mapcard{cursor:pointer;transition:border-color .15s}
+.mapcard:hover{border-color:#6b6f7a}
+.mapcard.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
 .danger{color:var(--bad);letter-spacing:2px}
 .stat{font-family:ui-monospace,monospace;font-size:12px;color:var(--dim)}
 </style>
@@ -1010,22 +1013,180 @@ DEBUG_SECTIONS.push(() => {
 });
 CHG.dbgForce = (d, el) => { W().forceNext = el.value; logDebug('force', el.value); afterChange(); };
 
-/* ---- [2-임시] 단계 ③(보드) 전까지 쓰는 간이 보드 ---- */
-function generateBoard() {
-  const regs = unlockedRegions(), cards = [];
-  for (let i = 0; i < CONFIG.board.cardCount; i++) {
-    const region = pick(regs, 'board');
-    const pool = CONFIG.species.filter(s => s.regions.includes(region));
-    cards.push(buildCard({ archetype: 'explore', region, nests: [0, 1].map(() => ({ kind: 'unknown', species: pick(pool, 'board').id })) }));
+/* =====================================================================
+   [3] 두더지 굴 보드 · 판돈 · 도감
+   ===================================================================== */
+// 불운 보정: 희귀 알이 threshold 보드 연속으로 안 나오면 가중치 증가 (플레이어에게 비공개)
+function pityMult(spId) {
+  const P = CONFIG.board.pity, n = W().pity[spId] || 0;
+  return SPECIES[spId].rarity === 'rare' && n >= P.threshold ? 1 + (n - P.threshold + 1) * P.perBoard : 1;
+}
+const nestWeight = s => CONFIG.board.rarityWeight[s.rarity] * pityMult(s.id);
+
+// '지금 필요한' 고급 재료: 다음 메인 거점 단계, 창고 알의 부화장, 다음 잔성장, 다음 지역 해금에 필요한 양 - 보유량
+function rareNeeds() {
+  const w = W(), need = {};
+  const add = cost => { for (const [k, v] of Object.entries(cost || {})) if (CONFIG.rare[k]) need[k] = (need[k] || 0) + v; };
+  add(CONFIG.hq.levels[w.hqLevel]?.cost);
+  const hatchOk = CONFIG.hq.levels[w.hqLevel - 1].hatcheries;
+  for (const e of w.eggs) { const h = SPECIES[e.species].hatchery; if (hatchOk.includes(h)) add(CONFIG.hatcheries[h].cost); }
+  if (w.modules.residual) for (const [k, def] of Object.entries(CONFIG.residual)) add(def.costs[w.residual[k]]);
+  const regs = unlockedRegions();
+  const locked = CONFIG.regions.findIndex(r => !regs.includes(r.id));
+  if (locked > 0) need[CONFIG.regions[locked - 1].rare] = (need[CONFIG.regions[locked - 1].rare] || 0) + 1;
+  return Object.entries(need).map(([k, v]) => [k, v - (w.resources[k] || 0)]).filter(([, d]) => d > 0)
+    .filter(([k]) => regs.includes(CONFIG.rare[k].region)).sort((a, b) => b[1] - a[1]).map(([k]) => k);
+}
+function makeArchCard(arch, region, fixed = []) {
+  const w = W(), B = CONFIG.board, at = B.archetypes[arch], nests = fixed.slice();
+  const pool = CONFIG.species.filter(s => s.regions.includes(region));
+  const owned = pool.filter(s => w.codex[s.id] === 'owned');
+  while (nests.length < at.nests) {
+    // 확정 둥지는 목격/획득한 알만. 수집형이 아닌 카드엔 ✓(획득)만 확정 둥지로 나옴
+    if (arch !== 'explore' && owned.length && chance(B.ownedConfirmedChance, 'board')) nests.push({ kind: 'confirmed', species: pick(owned, 'board').id });
+    else nests.push({ kind: chance(B.traceNestChance, 'board') ? 'trace' : 'unknown', species: weightedPick(pool, nestWeight, 'board').id });
   }
-  W().board = { cards, gen: (W().board?.gen || 0) + 1 };
+  return buildCard({ archetype: arch, region, nests });
+}
+function generateBoard() {
+  const w = W(), B = CONFIG.board, regs = unlockedRegions(), cards = [];
+  // 1) 수집형: 목격했지만 아직 획득 못한 알이 확정 둥지로, 위험도 높음
+  const cand = CONFIG.species.filter(s => w.codex[s.id] === 'seen' && s.regions.some(r => regs.includes(r)));
+  if (cand.length) {
+    const sp = weightedPick(cand, s => nestWeight(s) * (w.tracked === s.id ? B.track.collectWeightMult : 1), 'board');
+    cards.push(makeArchCard('collect', pick(sp.regions.filter(r => regs.includes(r)), 'board'), [{ kind: 'confirmed', species: sp.id }]));
+  }
+  // 2) 재료형: 지금 필요한 고급 재료가 나오는 지역
+  const need = rareNeeds();
+  cards.push(makeArchCard('material', need.length ? CONFIG.rare[need[0]].region : pick(regs, 'board')));
+  // 3) 안전형
+  cards.push(makeArchCard('safe', pick(regs, 'board')));
+  // 4) 모자라면 탐색형으로 채움
+  while (cards.length < B.cardCount) cards.push(makeArchCard('explore', pick(regs, 'board')));
+  cards.length = Math.min(cards.length, B.cardCount);
+  // 추적 표식: 추적 중인 알이 확정 둥지로 하나도 없으면 확률로 끼워 넣음
+  const t = w.tracked;
+  if (t && !cards.some(c => c.nests.some(n => n.kind === 'confirmed' && n.species === t)) && chance(B.track.injectChance, 'board')) {
+    const fit = cards.filter(c => SPECIES[t].regions.includes(c.region)).sort((a, b) => (a.archetype === 'collect') - (b.archetype === 'collect'));
+    const c = fit[0];
+    if (c) { const i = c.nests.map(n => n.kind).lastIndexOf('unknown') >= 0 ? c.nests.map(n => n.kind).lastIndexOf('unknown') : c.nests.length - 1; c.nests[i] = { kind: 'confirmed', species: t, revealed: false, tracked: true }; }
+  }
+  const final = shuffle(cards, 'board');
+  // 불운 카운터 갱신
+  for (const s of CONFIG.species) w.pity[s.id] = final.some(c => c.nests.some(n => n.species === s.id)) ? 0 : (w.pity[s.id] || 0) + 1;
+  w.board = { cards: final, gen: (w.board?.gen || 0) + 1 };
+  UI.burrowSel = null;
 }
 onNewGameHooks.push(() => generateBoard());
 afterRunHooks.push(r => { if (r.attempted) { generateBoard(); r.boardRefreshed = true; } });
-addScreen('burrow', '두더지 굴', () => `<h2>두더지 굴 (임시)</h2><div class="grid" style="grid-template-columns:repeat(3,1fr)">${W().board.cards.map(c =>
-  `<div class="card"><b>${esc(c.name)}</b><div class="nests">${nestIconsHtml(c)}</div><div>위험도 ${dangerDots(c.danger)}</div><button data-act="pickCard" data-id="${c.id}">이 맵으로</button></div>`).join('')}</div>`, 10);
-ACT.pickCard = d => { UI.cardId = d.id; go('prep'); };
-/* ---- [2-임시] 끝 ---- */
+
+// ---------- 두더지 굴 화면 ----------
+UI.burrowSel = null;
+function cardFront(c) {
+  const sel = UI.burrowSel === c.id, cost = entryCostFor(c.region);
+  return `<div class="card mapcard ${sel ? 'sel' : ''}" data-act="selCard" data-id="${c.id}">
+    <div style="font-weight:800">${esc(c.name)}</div><div class="dim" style="font-size:12px">${esc(c.theme)}</div>
+    <div class="nests" style="margin:10px 0;min-height:42px">${nestIconsHtml(c)}</div>
+    <div class="row" style="justify-content:space-between"><span>위험도 <b class="danger">${dangerDots(c.danger)}</b></span>
+      <span>${Object.keys(cost).length ? `${ALL_RES[Object.keys(cost)[0]].icon} 재료 ×${Object.values(cost)[0]}` : '<span class="ok">무료</span>'}</span></div></div>`;
+}
+function cardDetail(c) {
+  const cost = entryCostFor(c.region), err = canPay(cost) ? '' : '입장 재료 부족';
+  const qs = c.nests.map((n, i) => ({ n, i, v: nestView(n) }));
+  return `<div class="card" style="margin-top:10px;border-color:var(--accent)">
+    <div class="row"><b>${esc(c.name)}</b><span class="dim">상세</span></div>
+    <table style="margin-top:6px">
+      <tr><th style="width:130px">고급 재료</th><td>${resLabel(c.rare)} ×${c.rareAmount} <span class="dim">(탐욕 선택 후 생존 귀환 시 +${c.greedBonus})</span></td></tr>
+      <tr><th>위험 요소</th><td>${c.hazards.map(id => `<span class="pill">${HAZARD[id].name}</span>`).join(' ')}</td></tr>
+      <tr><th>둥지</th><td>${qs.map(({ n, v }) => `<div><span class="${v.cls === 'bang' ? 'bang' : v.cls === 'own' ? 'ok' : 'dim'}">${v.sym}</span> ${esc(v.label)}${n.tracked || W().tracked === n.species && v.sym !== '?' ? ' <span class="pill acc">📍 추적</span>' : ''}</div>`).join('')}</td></tr>
+      <tr><th>입장 비용</th><td>${costText(cost)}</td></tr>
+    </table>
+    <div class="row" style="margin-top:8px"><button class="primary" data-act="pickCard" data-id="${c.id}" ${err ? 'disabled' : ''}>이 맵으로 출동 준비</button><span class="bad">${err}</span></div></div>`;
+}
+addScreen('burrow', '두더지 굴', () => {
+  const w = W(), b = w.board, sel = b.cards.find(c => c.id === UI.burrowSel);
+  const qNests = [];
+  b.cards.forEach(c => c.nests.forEach((n, i) => { if (n.kind !== 'confirmed' && !n.revealed) qNests.push({ c, i }); }));
+  const S_ = CONFIG.board.stakes;
+  return `<h2>두더지 굴 <span class="dim" style="font-size:13px">보드 #${b.gen}</span></h2>
+  <div class="row dim" style="margin-bottom:8px">✓ 획득한 알 · <span class="bang">!</span> 목격했지만 없는 알 · ? 미확인 둥지
+    ${w.tracked ? `<span class="pill acc">📍 추적 중: ${eggName(w.tracked)}</span>` : ''}</div>
+  <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr))">${b.cards.map(cardFront).join('')}</div>
+  ${sel ? cardDetail(sel) : '<p class="dim">카드를 누르면 상세가 펼쳐집니다.</p>'}
+  <div class="card" style="margin-top:14px;background:#1b1a22;max-width:560px"><b>🎲 판돈</b>
+    <div class="row" style="margin-top:6px"><select id="revealSel">${qNests.map(({ c, i }) => `<option value="${c.id}:${i}">${esc(c.name)} — ? 둥지 ${i + 1}</option>`).join('') || '<option value="">공개할 ? 둥지 없음</option>'}</select>
+      <button data-act="stakeReveal" ${qNests.length && canPay(S_.reveal) ? '' : 'disabled'}>정체 공개 (${costText(S_.reveal)})</button></div>
+    <div class="row" style="margin-top:6px"><button data-act="stakeReroll" ${canPay(S_.reroll) ? '' : 'disabled'}>보드 다시 뽑기 (${costText(S_.reroll)})</button></div></div>`;
+}, 10);
+const detailOpenHooks = [];
+ACT.selCard = d => {
+  if (UI.burrowSel !== d.id) { UI.burrowSel = d.id; detailOpenHooks.forEach(f => f(d.id)); persist(); }
+  else UI.burrowSel = null;
+  render();
+};
+ACT.pickCard = d => { if (UI.cardId !== d.id) { UI.gm = null; UI.target = 0; } UI.cardId = d.id; playerAction('pick_card', d.id); go('prep'); };
+const stakeHooks = [];
+ACT.stakeReveal = () => {
+  const v = $('#revealSel').value; if (!v) return;
+  const [cid, i] = v.split(':'); const c = W().board.cards.find(x => x.id === cid); const n = c && c.nests[+i];
+  const cost = CONFIG.board.stakes.reveal; if (!n || !canPay(cost)) return;
+  pay(cost); n.revealed = true;
+  // 정찰로 정체를 본 알은 도감에 '목격'으로 등록
+  let fresh = false; if (W().codex[n.species] === 'unseen') { W().codex[n.species] = 'seen'; fresh = true; }
+  stakeHooks.forEach(f => f('reveal')); playerAction('stake_reveal', n.species);
+  afterChange(); toast(`? 둥지의 정체: ${eggName(n.species)}${fresh ? ' (도감 목격 등록)' : ''}`);
+};
+ACT.stakeReroll = () => {
+  const cost = CONFIG.board.stakes.reroll; if (!canPay(cost)) return;
+  pay(cost); generateBoard(); if (UI.cardId && !currentCard()) UI.cardId = null;
+  stakeHooks.forEach(f => f('reroll')); playerAction('stake_reroll'); afterChange(); toast('보드를 다시 뽑았습니다');
+};
+
+// ---------- 도감 ----------
+const trackHooks = [];
+addScreen('codex', '도감', () => {
+  const w = W();
+  const cnt = st => CONFIG.species.filter(s => w.codex[s.id] === st).length;
+  const groups = CONFIG.regions.map(reg => {
+    const list = CONFIG.species.filter(s => s.regions[0] === reg.id);
+    const locked = !unlockedRegions().includes(reg.id);
+    return `<div class="card"><h3>${reg.name} <span class="dim" style="font-size:12px">${locked ? '🔒 미해금' : reg.theme}</span></h3>
+      <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(190px,1fr))">${list.map(s => codexEntry(s)).join('')}</div></div>`;
+  }).join('');
+  return `<h2>알 도감</h2><div class="row dim" style="margin-bottom:8px">획득 ${cnt('owned')} · 목격 ${cnt('seen')} · 미발견 ${cnt('unseen')} / ${CONFIG.species.length}종
+    — 목격하거나 획득한 알에 📍추적 표식을 걸면 그 알이 확정 둥지로 나오는 카드가 더 자주 생깁니다.</div>
+    <div class="col" style="gap:10px">${groups}</div>`;
+}, 50);
+function codexEntry(s) {
+  const st = W().codex[s.id], tracked = W().tracked === s.id;
+  if (st === 'unseen') return `<div class="mon" style="opacity:.55;flex-direction:column;align-items:flex-start"><span style="font-size:26px">🥚</span><b>???</b><span class="dim">미발견</span></div>`;
+  const egg = `<span style="font-size:26px;${st === 'seen' ? 'filter:grayscale(1) brightness(.5)' : ''}">🥚</span>`;
+  const detail = st === 'owned'
+    ? `<span class="stat">침${s.stats.inf} 운${s.stats.car} 대${s.stats.rea} · 생산 ${prodIcons(s.id)}</span>`
+    : `<span class="dim">실루엣만 확인됨</span>`;
+  return `<div class="mon" style="flex-direction:column;align-items:flex-start;${tracked ? 'border-color:var(--accent)' : ''}">${egg}
+    <b>${eggName(s.id)}</b><span class="${st === 'owned' ? 'ok' : 'bang'}">${st === 'owned' ? '✓ 획득' : '! 목격'}</span>${s.rarity === 'rare' ? '<span class="pill acc">희귀</span>' : ''}
+    <span class="dim" style="font-size:12px">출현: ${s.regions.map(r => REGION[r].family).join(', ')} · ${CONFIG.hatcheries[s.hatchery].name}</span>${detail}
+    <button class="small ${tracked ? 'on' : ''}" data-act="track" data-s="${s.id}">${tracked ? '📍 추적 해제' : '📍 추적'}</button></div>`;
+}
+ACT.track = d => {
+  const w = W(); w.tracked = w.tracked === d.s ? null : d.s;
+  trackHooks.forEach(f => f(w.tracked)); playerAction('track', d.s); afterChange();
+};
+
+// 디버그: 보드
+DEBUG_SECTIONS.push(() => `<b>보드 · 도감</b><div class="row" style="margin-top:4px">
+  <button class="small" data-act="dbgBoard">보드 무료 재생성</button><button class="small" data-act="dbgSeeAll">전 종 목격 처리</button></div>
+  <div class="row" style="margin-top:4px"><select id="dbgEggSp">${CONFIG.species.map(s => `<option value="${s.id}">${eggName(s.id)}</option>`).join('')}</select><button class="small" data-act="dbgEgg">알 지급</button></div>
+  <div class="dim" style="margin-top:2px">불운 카운터: ${CONFIG.species.filter(s => s.rarity === 'rare').map(s => `${s.id}=${W().pity[s.id]}(×${pityMult(s.id)})`).join(' ')}</div>`);
+ACT.dbgBoard = () => { generateBoard(); logDebug('board'); afterChange(); };
+ACT.dbgSeeAll = () => { for (const s of CONFIG.species) if (W().codex[s.id] === 'unseen') W().codex[s.id] = 'seen'; logDebug('seeAll'); afterChange(); };
+ACT.dbgEgg = () => {
+  const sp = $('#dbgEggSp').value, w = W();
+  w.eggs.push({ id: nid('e'), species: sp, size: SPECIES[sp].eggSize, sizeDelta: 0, damaged: false, tag: '디버그로 지급된 알', acquiredRun: w.runCount, acquiredBy: actor(), from: '디버그' });
+  if (w.codex[sp] === 'unseen') w.codex[sp] = 'seen';
+  logDebug('egg', sp); afterChange();
+};
 
 /* =====================================================================
    부팅
