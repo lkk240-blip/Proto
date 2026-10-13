@@ -1,0 +1,627 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nest 메타 루프</title>
+<style>
+:root{
+  --bg:#15171c; --panel:#1e2128; --panel2:#262a33; --line:#343a46; --text:#e8e9ec; --dim:#9aa0ab;
+  --accent:#e0a53b; --bang:#ff5d73; --ok:#5fc27e; --warn:#e6c14f; --bad:#e2574c; --info:#6aa8e8;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 "Pretendard","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif}
+button{font:inherit;color:inherit;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer}
+button:hover:not(:disabled){border-color:var(--accent)}
+button:disabled{opacity:.4;cursor:not-allowed}
+button.primary{background:var(--accent);color:#1b1b1b;border-color:var(--accent);font-weight:700}
+button.small{padding:1px 7px;font-size:12px}
+button.on{border-color:var(--accent);color:var(--accent)}
+select,input,textarea{font:inherit;color:var(--text);background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:3px 6px}
+h2{margin:0 0 10px;font-size:18px} h3{margin:12px 0 6px;font-size:15px} h4{margin:8px 0 4px;font-size:13px;color:var(--dim)}
+.dim{color:var(--dim)} .ok{color:var(--ok)} .bad{color:var(--bad)} .warn{color:var(--warn)} .bang{color:var(--bang)}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.col{display:flex;flex-direction:column;gap:6px}
+.grid{display:grid;gap:10px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px}
+.pill{display:inline-block;padding:0 7px;border-radius:999px;border:1px solid var(--line);font-size:12px;color:var(--dim);white-space:nowrap}
+.pill.acc{color:var(--accent);border-color:var(--accent)}
+.tag{font-style:italic;color:#d9c7a3}
+#topbar{position:sticky;top:0;z-index:5;background:#101216;border-bottom:1px solid var(--line);padding:8px 14px;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+#topbar .title{font-weight:800;color:var(--accent)}
+#res{display:flex;gap:10px;flex-wrap:wrap}
+#res span{white-space:nowrap}
+#nav{display:flex;gap:4px;flex-wrap:wrap;margin-left:auto}
+#layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:14px;padding:14px;align-items:start}
+#debug{position:sticky;top:64px;max-height:calc(100vh - 80px);overflow:auto;background:#1a1610;border:1px dashed #6b5a2e;border-radius:10px;padding:10px;font-size:12.5px}
+#debug h3{color:var(--accent)}
+#debug .sec{border-top:1px dashed #4a3f22;padding-top:6px;margin-top:6px}
+@media (max-width:900px){#layout{grid-template-columns:1fr;padding:10px 16px}#debug{position:static;max-height:none}}
+table{border-collapse:collapse;width:100%} td,th{border-bottom:1px solid var(--line);padding:4px 6px;text-align:left;font-size:13px;vertical-align:top}
+#modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:20;padding:16px}
+#modal.show{display:flex}
+#modal .box{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;max-width:640px;width:100%;max-height:90vh;overflow:auto}
+#toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:#000c;border:1px solid var(--line);padding:6px 14px;border-radius:8px;display:none;z-index:30}
+.mon{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel2)}
+.mon .nm{font-weight:700}
+.stat{font-family:ui-monospace,monospace;font-size:12px;color:var(--dim)}
+</style>
+</head>
+<body>
+<header id="topbar">
+  <span class="title">Nest 메타 루프 프로토</span>
+  <div id="res"></div>
+  <nav id="nav"></nav>
+</header>
+<main id="layout">
+  <section id="screen"></section>
+  <aside id="debug"></aside>
+</main>
+<div id="modal"><div class="box" id="modalBox"></div></div>
+<div id="toast"></div>
+
+<script>
+/* =====================================================================
+   Nest(가칭) 메타 루프 프로토타입
+   - 단일 HTML. 밸런스·콘텐츠 수치는 전부 아래 CONFIG 한 곳에 있습니다.
+   - "임시로 정한 값" 목록은 같은 폴더 README.md 참고.
+   ===================================================================== */
+
+const CONFIG = {
+  schemaVersion: 1,
+  saveKey: 'nest-meta-proto-v1',
+  defaultSeed: 'nest-001',
+  virtualRunMinutes: 10,   // 런 1회 = 가상 10분
+  partyMax: 4,
+  fruitSlots: 2,
+  activeIdleCapSec: 180,   // 입력 없이 이 시간이 지나면 '실제 경과 시간' 집계를 멈춤
+
+  // 모듈 토글 기본값 (디버그 패널에서 변경)
+  modulesDefault: {
+    residual: true,          // 공용 잔성장 모듈
+    abilityMode: 'random',   // 'random' = A안(전용 풀에서 랜덤) / 'fixed' = B안(종마다 고정)
+    laborMode: 'auto',       // 'auto' = 남은 몬스터 자동 배치 / 'manual' = 직접 배치
+    runMode: 'prob',         // 'prob' = 확률 모드 / 'gm' = 진행자 모드
+  },
+
+  // ---------- 자원 ----------
+  common: {
+    wood:  { name: '나무', icon: '🪵' },
+    stone: { name: '돌',   icon: '🪨' },
+    berry: { name: '열매', icon: '🫐' },
+  },
+  rare: {
+    amber:    { name: '송진 호박', icon: '🟠', region: 'forest' },
+    moss:     { name: '이끼 결정', icon: '🟢', region: 'swamp' },
+    obsidian: { name: '흑요 파편', icon: '⚫', region: 'canyon' },
+  },
+  start: {
+    resources: { wood: 25, stone: 20, berry: 12 },
+    monsters: ['A', 'A', 'B'],     // 시작 몬스터 (종 id)
+  },
+
+  // ---------- 지역 (배열 순서 = 해금 사다리 순서) ----------
+  // 지역 N(2번째부터)은 지역 N-1의 고급 재료를 한 번이라도 얻으면 보드에 등장하고,
+  // 입장할 때마다 지역 N-1 고급 재료 × entryCost 를 냅니다. 지역 1은 무료.
+  regions: [
+    { id: 'forest', name: '가시덤불 숲', family: '숲',   rare: 'amber',    entryCost: 0,
+      theme: '울창한 숲 · 좁은 오솔길',   facilities: ['벌목 감시초소', '숲 외곽 연구동', '버려진 양봉장'] },
+    { id: 'swamp',  name: '안개 습지',   family: '습지', rare: 'moss',     entryCost: 2,
+      theme: '짙은 안개 · 얕은 물웅덩이', facilities: ['정수 처리장', '늪지 관측소', '수상 채집 기지'] },
+    { id: 'canyon', name: '잿빛 협곡',   family: '협곡', rare: 'obsidian', entryCost: 2,
+      theme: '뜨거운 암반 · 절벽길',     facilities: ['지열 발전소', '채굴 전진기지', '낙석 감시탑'] },
+  ],
+
+  // ---------- 런 성향 값 ----------
+  stats: { inf: '침입', car: '운반', rea: '대응' },
+
+  // 능력 사전. stat = 런 성향 값 가산, fx = 특수 효과
+  //   fx.bag: 가방칸 +n / fx.revive: 동료 소생 확률 +p / fx.witness: 다른 둥지 목격 확률 +p / fx.guard: 파티 다운 확률 -p
+  abilities: {
+    claw:   { name: '할퀴기',     stat: { rea: 1 } },
+    ram:    { name: '들이받기',   stat: { car: 1 } },
+    tail:   { name: '꼬리 휘두르기', stat: { inf: 1 } },
+    sting:  { name: '독침',       stat: { rea: 1 }, fx: { guard: 0.03 } },
+    spit:   { name: '점액 뱉기',  stat: { inf: 1, rea: 1 } },
+    shadow: { name: '그림자 숨기', stat: { inf: 2 } },
+    pack:   { name: '짐 지기',     fx: { bag: 1 } },
+    drag:   { name: '동료 끌기',   fx: { revive: 0.2 } },
+    sight:  { name: '넓은 시야',   fx: { witness: 0.3 } },
+    shell:  { name: '단단한 껍질', fx: { guard: 0.06 } },
+  },
+
+  // ---------- 몬스터 종 (= 알 종) ----------
+  // prod: 생산 능력(berry/wood/stone 0~2개), stats: 런 성향 값, hatchery: 요구 부화장,
+  // regions: 알 출현 지역, rarity: common/rare, eggSize: 기본 알 크기(S/M/L), hatchRuns: 부화에 걸리는 '시도한 런' 수
+  // attacks/specials: A안 랜덤 풀(2개 중 1개). B안(고정)은 각 풀의 첫 번째를 사용.
+  species: [
+    { id: 'A', name: '몬스터 A', prod: ['berry'],          stats: { inf: 3, car: 1, rea: 2 }, hatchery: 'basic', regions: ['forest'],          rarity: 'common', eggSize: 'S', hatchRuns: 1, attacks: ['claw', 'tail'],  specials: ['shadow', 'sight'] },
+    { id: 'B', name: '몬스터 B', prod: ['wood'],           stats: { inf: 1, car: 3, rea: 2 }, hatchery: 'basic', regions: ['forest'],          rarity: 'common', eggSize: 'M', hatchRuns: 1, attacks: ['ram', 'claw'],   specials: ['pack', 'shell'] },
+    { id: 'C', name: '몬스터 C', prod: ['berry', 'stone'], stats: { inf: 2, car: 2, rea: 3 }, hatchery: 'basic', regions: ['forest', 'swamp'], rarity: 'rare',   eggSize: 'M', hatchRuns: 2, attacks: ['sting', 'claw'], specials: ['drag', 'sight'] },
+    { id: 'D', name: '몬스터 D', prod: ['berry', 'wood'],  stats: { inf: 2, car: 2, rea: 2 }, hatchery: 'swamp', regions: ['swamp'],           rarity: 'common', eggSize: 'M', hatchRuns: 2, attacks: ['spit', 'tail'],  specials: ['shadow', 'drag'] },
+    { id: 'E', name: '몬스터 E', prod: ['stone'],          stats: { inf: 2, car: 2, rea: 1 }, hatchery: 'basic', regions: ['swamp', 'forest'], rarity: 'common', eggSize: 'S', hatchRuns: 1, attacks: ['tail', 'ram'],   specials: ['pack', 'sight'] },
+    { id: 'F', name: '몬스터 F', prod: ['wood'],           stats: { inf: 1, car: 4, rea: 3 }, hatchery: 'swamp', regions: ['swamp'],           rarity: 'rare',   eggSize: 'L', hatchRuns: 3, attacks: ['ram', 'spit'],   specials: ['pack', 'shell'] },
+    { id: 'G', name: '몬스터 G', prod: ['stone', 'wood'],  stats: { inf: 1, car: 4, rea: 2 }, hatchery: 'large', regions: ['canyon'],          rarity: 'common', eggSize: 'L', hatchRuns: 2, attacks: ['ram', 'sting'],  specials: ['shell', 'pack'] },
+    { id: 'H', name: '몬스터 H', prod: ['berry'],          stats: { inf: 4, car: 1, rea: 1 }, hatchery: 'basic', regions: ['canyon', 'swamp'], rarity: 'common', eggSize: 'S', hatchRuns: 1, attacks: ['tail', 'claw'],  specials: ['shadow', 'sight'] },
+    { id: 'I', name: '몬스터 I', prod: ['stone'],          stats: { inf: 2, car: 3, rea: 4 }, hatchery: 'large', regions: ['canyon'],          rarity: 'rare',   eggSize: 'L', hatchRuns: 3, attacks: ['sting', 'spit'], specials: ['drag', 'shell'] },
+  ],
+
+  eggs: {
+    sizes: { S: '소', M: '중', L: '대' },
+    sizeVarianceChance: 0.25,   // 기본 크기에서 한 단계 크거나 작게 나올 확률(각각 절반)
+    bigBonusStat: 1,            // 기본보다 큰 알 → 부화 시 가장 높은 성향 값 +1
+    smallHatchBonus: 1,         // 기본보다 작은 알 → 부화 런 -1 (최소 1)
+    damagedHatchPenalty: 1,     // 손상된 알 → 부화 런 +1
+  },
+
+  // ---------- 장비: 열매 (몬스터당 2칸, 사망 시 소실, 해제 불가) ----------
+  fruits: {
+    sour:   { name: '신맛 열매',  cost: { berry: 3 },           stat: { inf: 1 } },
+    sweet:  { name: '단맛 열매',  cost: { berry: 3 },           stat: { car: 1 } },
+    bitter: { name: '쓴맛 열매',  cost: { berry: 3 },           stat: { rea: 1 } },
+    amberF: { name: '호박 열매',  cost: { berry: 2, amber: 1 }, fx: { guard: 0.08 } },
+    mossF:  { name: '이끼 열매',  cost: { berry: 2, moss: 1 },  fx: { bag: 1 } },
+  },
+
+  // ---------- 건물 ----------
+  base: { plotCount: 8 },   // 거점의 고정 건설 슬롯 수 (메인 거점·두더지 굴은 별도)
+  hq: {
+    // 단계 수는 이 배열 길이로 자유롭게 조절. cost = 이 단계로 올라가는 비용.
+    // workSlots: 몬스터 작업 슬롯 수 / prodMax: 생산 건물 종류별 최대 개수 / hatcheries: 지을 수 있는 부화장
+    levels: [
+      { workSlots: 2, prodMax: { berry: 1, wood: 1, stone: 0 }, hatcheries: ['basic'],                   cost: null },
+      { workSlots: 4, prodMax: { berry: 1, wood: 1, stone: 1 }, hatcheries: ['basic', 'swamp'],          cost: { wood: 20, stone: 12, amber: 2 } },
+      { workSlots: 6, prodMax: { berry: 2, wood: 2, stone: 1 }, hatcheries: ['basic', 'swamp', 'large'], cost: { wood: 35, stone: 25, moss: 3 } },
+      { workSlots: 8, prodMax: { berry: 2, wood: 2, stone: 2 }, hatcheries: ['basic', 'swamp', 'large'], cost: { wood: 50, stone: 40, obsidian: 3 } },
+    ],
+  },
+  production: {
+    berry: { name: '열매 덤불', res: 'berry', cost: { wood: 8 },            slots: 3, perMonster: 4 },
+    wood:  { name: '벌목장',   res: 'wood',  cost: { wood: 4, stone: 4 },  slots: 3, perMonster: 4 },
+    stone: { name: '채석장',   res: 'stone', cost: { wood: 10 },           slots: 3, perMonster: 4 },
+  },
+  hatcheries: {
+    basic: { name: '기본 부화장', cost: { wood: 6, berry: 2 } },
+    swamp: { name: '습지 부화장', cost: { wood: 6, stone: 4, moss: 2 } },
+    large: { name: '대형 부화장', cost: { wood: 10, stone: 8, obsidian: 2 } },
+  },
+
+  // ---------- 공용 잔성장 (모듈 토글로 전체 끄기 가능) ----------
+  // costs[i] = i+1 단계 구매 비용
+  residual: {
+    bag:      { name: '가방칸 +1',        desc: '런에서 운반 가능한 알 칸 +1',          max: 2, costs: [{ amber: 2, wood: 10 }, { moss: 3, wood: 15 }] },
+    dash:     { name: '대시 충전 +1',     desc: '도주 판정 +6%, 다운 확률 -3%',         max: 2, costs: [{ amber: 2 }, { obsidian: 2 }] },
+    revive:   { name: '소생 창 연장',     desc: '다운 시 소생 확률 +15%',               max: 2, costs: [{ moss: 2 }, { obsidian: 2 }] },
+    discount: { name: '입장 비용 할인',   desc: '두더지 굴 입장 재료 -1 (최소 0)',      max: 1, costs: [{ wood: 20, stone: 20 }] },
+  },
+
+  // ---------- 런 스텁(확률 모드) ----------
+  run: {
+    baseBag: 2,                          // 기본 가방칸
+    sizeSlots: { S: 1, M: 1, L: 2 },     // 알 크기별 차지 칸
+    dangerReq: [0, 5, 8, 11],            // 위험도별 '파티 합산 성향 값' 기준치
+    base: { infil: 0.75, grab: 0.8, escape: 0.75 },
+    perPoint: 0.04,                      // 기준치 대비 성향 값 1당 확률 변화
+    pMin: 0.1, pMax: 0.95,
+    hazardPenalty: 0.10,                 // 위험 요소 1개당 해당 판정 -10% (해당 성향이 기준치+여유 이상이면 무효)
+    hazardCounterMargin: 2,
+    alarmGrabPenalty: 0.3,               // 침입 실패(경보) 시 알 집기 -30%
+    greedGrabPenalty: 0.1,               // 두 번째 알 집기 -10%
+    greedEscapePenalty: 0.1,
+    downBase: [0, 0.06, 0.12, 0.2],      // 위험도별 기본 다운 확률
+    downAlarm: 0.12, downEscapeFail: 0.12, downGreed: 0.06, downReaPerPoint: 0.01,
+    downNoiseOver: 0.1,                  // 소란도가 임계값 이상이면 추가 다운 확률(증원 도착)
+    reviveBase: 0.45,
+    witnessOther: 0.5,                   // 목표가 아닌 둥지를 목격할 확률
+    escapeFailDrop: 0.5,                 // 도주 실패 시 알을 떨어뜨릴 확률(나머지는 손상)
+    // 공용 잔성장 효과량
+    dashEscape: 0.06, dashDown: 0.03, revivePerLevel: 0.15,
+    noise: { alarm: 50, greed: 20, hazard: 10, escapeFail: 40 },
+    // ▼ 성장 대상이 아닌 고정 수치. 잔성장/장비/능력 어떤 것으로도 바꾸지 않습니다.
+    locked: {
+      eggDetectMult: 1.5,                          // 알 소지 시 감지 배율 (도주 실패 다운 확률에 곱)
+      eggCarryPenalty: { S: 0, M: 0.05, L: 0.12 }, // 알 운반 페널티 (도주 판정 감소)
+      noiseThreshold: 100,                          // 소란도 임계값
+    },
+  },
+
+  // ---------- 두더지 굴 보드 ----------
+  board: {
+    cardCount: 3,
+    archetypes: {
+      collect:  { label: '수집', danger: 3, rareAmount: 1, nests: 3 },
+      material: { label: '재료', danger: 2, rareAmount: 3, nests: 2 },
+      safe:     { label: '안전', danger: 1, rareAmount: 1, nests: 2 },
+      explore:  { label: '탐색', danger: 2, rareAmount: 1, nests: 3 },   // 조건이 안 맞을 때 채우는 대체 유형
+    },
+    greedRareBonus: 2,               // 탐욕 선택 + 생존 귀환 시 추가 고급 재료
+    ownedConfirmedChance: 0.35,      // 수집형 외 카드에 ✓(획득한 알) 확정 둥지가 나올 확률(둥지당)
+    traceNestChance: 0.5,            // ? 둥지 중 '흔적 둥지'(지역 계열 힌트 있음) 비율
+    rarityWeight: { common: 1, rare: 0.35 },
+    pity: { threshold: 3, perBoard: 0.5 },   // 희귀 알이 threshold 보드 연속 미등장 → 이후 보드마다 가중치 +50%
+    track: { collectWeightMult: 4, injectChance: 0.6 },
+    stakes: { reveal: { stone: 4 }, reroll: { wood: 6, stone: 3 } },
+  },
+
+  // ---------- 사건 태그 문구 ----------
+  tags: {
+    clean:     '경비의 틈으로 조용히 빼낸 알',
+    chaseCrack:'{hazard} 속에서 도망치다 금이 간 알',
+    crack:     '도주 중 바닥에 부딪혀 금이 간 알',
+    loss:      '{name}을(를) 잃고 지켜낸 알',
+    revived:   '쓰러진 동료를 끌고 나온 알',
+    alarm:     '경보 속에서 낚아챈 알',
+    greed:     '욕심껏 두 개를 챙긴 날의 알',
+    // 알이 없을 때의 런 요약
+    noEggAlarm: '경보가 울려 빈손으로 물러났다',
+    noEggDrop:  '추격에 쫓겨 알을 떨어뜨리고 말았다',
+    noEggWipe:  '파티가 전멸했다',
+    noEggMiss:  '둥지에 닿았지만 알을 집지 못했다',
+    empty:      '둥지에 손대지 않고 곧장 빠져나왔다',
+  },
+};
+
+/* =====================================================================
+   [1] 유틸 · 시드 난수 · 데이터 모델 · 저장
+   ===================================================================== */
+const $ = (s, r = document) => r.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const pct = p => Math.round(p * 100) + '%';
+const deepClone = o => JSON.parse(JSON.stringify(o));
+
+const SPECIES = Object.fromEntries(CONFIG.species.map(s => [s.id, s]));
+const REGION = Object.fromEntries(CONFIG.regions.map(r => [r.id, r]));
+const ALL_RES = { ...CONFIG.common, ...CONFIG.rare };
+const RES_KEYS = Object.keys(ALL_RES);
+
+// --- 시드 난수: 스트림별 mulberry32. 상태를 세이브에 넣어 이어하기도 재현됩니다. ---
+function hashStr(str) {
+  let h = 1779033703 ^ str.length;
+  for (let i = 0; i < str.length; i++) { h = Math.imul(h ^ str.charCodeAt(i), 3432918353); h = (h << 13) | (h >>> 19); }
+  h = Math.imul(h ^ (h >>> 16), 2246822507); h = Math.imul(h ^ (h >>> 13), 3266489909);
+  return (h ^ (h >>> 16)) >>> 0;
+}
+const RNG_STREAMS = ['board', 'run', 'hatch', 'misc'];
+function initRng(seed) { return Object.fromEntries(RNG_STREAMS.map(s => [s, hashStr(seed + ':' + s) | 0])); }
+function rand(stream = 'misc') {
+  let a = S.world.rng[stream];
+  a = (a + 0x6D2B79F5) | 0;
+  S.world.rng[stream] = a;
+  let t = Math.imul(a ^ (a >>> 15), 1 | a);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+const chance = (p, st) => rand(st) < p;
+const randInt = (a, b, st) => a + Math.floor(rand(st) * (b - a + 1));
+const pick = (arr, st) => arr[Math.floor(rand(st) * arr.length)];
+function weightedPick(items, wfn, st) {
+  const ws = items.map(wfn); const tot = ws.reduce((a, b) => a + b, 0);
+  if (tot <= 0) return null;
+  let r = rand(st) * tot;
+  for (let i = 0; i < items.length; i++) { r -= ws[i]; if (r < 0) return items[i]; }
+  return items[items.length - 1];
+}
+function shuffle(arr, st) { const a = arr.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rand(st) * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+
+// --- 저장 (localStorage 실패해도 동작) ---
+const Store = {
+  ok: true,
+  load() { try { const t = localStorage.getItem(CONFIG.saveKey); return t ? JSON.parse(t) : null; } catch (e) { this.ok = false; return null; } },
+  save(data) { try { localStorage.setItem(CONFIG.saveKey, JSON.stringify(data)); this.ok = true; } catch (e) { this.ok = false; } },
+  clear() { try { localStorage.removeItem(CONFIG.saveKey); } catch (e) { this.ok = false; } },
+};
+
+/* 세이브 구조
+   S = { world, log }
+   world = 하나의 월드(호스트) 공용 자산. 계정 단위 분리 없음.
+     members[]      : 이 월드를 함께 쓰는 플레이어 목록 (프로토는 1인 조작이지만 구조는 다인 전제)
+     activeMember   : 현재 조작 중인 멤버 id. 행동 기록·알 획득자에 찍힘
+     resources, hqLevel, plots[], eggs[](창고), monsters[], graveyard[], codex{}, tracked, pity{},
+     board, rareEver{}, residual{}, modules{}, rng{}, runCount, triedRunCount, lastResult
+*/
+let S = null;
+
+function newWorld(seed) {
+  seed = String(seed ?? CONFIG.defaultSeed);
+  const w = {
+    schema: CONFIG.schemaVersion,
+    id: 'world-' + hashStr(seed + Date.now()).toString(36),
+    seed, createdAt: new Date().toISOString(),
+    members: [{ id: 'p1', name: '호스트' }],
+    activeMember: 'p1',
+    rng: initRng(seed),
+    nextId: 1,
+    resources: Object.fromEntries(RES_KEYS.map(k => [k, 0])),
+    hqLevel: 1,
+    plots: Array(CONFIG.base.plotCount).fill(null),
+    eggs: [], monsters: [], graveyard: [],
+    codex: Object.fromEntries(CONFIG.species.map(s => [s.id, 'unseen'])),
+    tracked: null,
+    pity: Object.fromEntries(CONFIG.species.map(s => [s.id, 0])),
+    board: null,
+    rareEver: {},
+    residual: Object.fromEntries(Object.keys(CONFIG.residual).map(k => [k, 0])),
+    modules: { ...CONFIG.modulesDefault },
+    forceNext: 'none',
+    runCount: 0, triedRunCount: 0,
+    lastResult: null,
+  };
+  for (const [k, v] of Object.entries(CONFIG.start.resources)) w.resources[k] = v;
+  return w;
+}
+function newLog() {
+  return { startedAt: new Date().toISOString(), activeMs: 0, runs: [], visits: [], cycles: [], events: [],
+    counters: { detailOpens: 0, tracks: 0, stakeReveal: 0, stakeReroll: 0 },
+    sinceRun: { detailOpens: 0, tracks: 0, stakeReveal: 0, stakeReroll: 0, lastDetailCard: null },
+    curVisit: null };
+}
+function newGame(seed) {
+  S = { world: newWorld(seed), log: newLog() };
+  for (const sp of CONFIG.start.monsters) { const m = createMonster(sp, { tag: '처음부터 거점에 있던 몬스터' }); m.starter = true; S.world.monsters.push(m); S.world.codex[sp] = 'owned'; }
+  onNewGameHooks.forEach(f => f());
+  persist();
+}
+const onNewGameHooks = [];
+function persist() { Store.save(S); }
+const W = () => S.world;
+const nid = p => p + (W().nextId++);
+const actor = () => W().activeMember;
+
+// --- 자원 ---
+function canPay(cost) { if (!cost) return true; return Object.entries(cost).every(([k, v]) => (W().resources[k] || 0) >= v); }
+function pay(cost) { if (!cost) return; for (const [k, v] of Object.entries(cost)) W().resources[k] -= v; }
+function gain(res, n) { W().resources[res] = (W().resources[res] || 0) + n; if (CONFIG.rare[res] && n > 0) W().rareEver[res] = true; }
+function costText(cost) {
+  if (!cost || !Object.keys(cost).length) return '무료';
+  return Object.entries(cost).map(([k, v]) => {
+    const have = W().resources[k] || 0;
+    return `<span class="${have >= v ? '' : 'bad'}">${ALL_RES[k].icon}${ALL_RES[k].name}×${v}</span>`;
+  }).join(' ');
+}
+const resLabel = k => `${ALL_RES[k].icon}${ALL_RES[k].name}`;
+
+// --- 몬스터 ---
+function abilityText(id) {
+  const a = CONFIG.abilities[id]; if (!a) return '';
+  const parts = [];
+  for (const [s, v] of Object.entries(a.stat || {})) parts.push(`${CONFIG.stats[s]}+${v}`);
+  const fx = a.fx || {};
+  if (fx.bag) parts.push(`가방칸+${fx.bag}`);
+  if (fx.revive) parts.push(`동료 소생+${pct(fx.revive)}`);
+  if (fx.witness) parts.push(`목격+${pct(fx.witness)}`);
+  if (fx.guard) parts.push(`파티 다운-${pct(fx.guard)}`);
+  return parts.join(', ');
+}
+function createMonster(spId, opts = {}) {
+  const sp = SPECIES[spId];
+  const mode = W().modules.abilityMode;
+  const attack = mode === 'random' ? pick(sp.attacks, 'hatch') : sp.attacks[0];
+  const special = mode === 'random' ? pick(sp.specials, 'hatch') : sp.specials[0];
+  const stats = { ...sp.stats };
+  if (opts.bigEgg) { const best = Object.keys(stats).sort((a, b) => stats[b] - stats[a])[0]; stats[best] += CONFIG.eggs.bigBonusStat; }
+  const sameCount = W().monsters.concat(W().graveyard).filter(m => m.species === spId).length;
+  return {
+    id: nid('m'), species: spId, name: `${sp.name}-${sameCount + 1}`,
+    stats, attack, special, abilityMode: mode,
+    fruits: [], tag: opts.tag || '', bigEgg: !!opts.bigEgg,
+    bornRun: W().runCount, runs: 0, cycle: opts.cycle || null, owner: actor(),
+  };
+}
+function getMon(id) { return W().monsters.find(m => m.id === id); }
+// 몬스터의 런 성향 값 및 효과 합산 (기본 + 능력 + 열매)
+function monPower(m) {
+  const p = { inf: m.stats.inf, car: m.stats.car, rea: m.stats.rea, bag: 0, revive: 0, witness: 0, guard: 0 };
+  const add = src => {
+    if (!src) return;
+    for (const [s, v] of Object.entries(src.stat || {})) p[s] += v;
+    for (const [s, v] of Object.entries(src.fx || {})) p[s] += v;
+  };
+  add(CONFIG.abilities[m.attack]); add(CONFIG.abilities[m.special]);
+  for (const f of m.fruits) add(CONFIG.fruits[f]);
+  return p;
+}
+function prodIcons(spId) { return SPECIES[spId].prod.map(r => CONFIG.common[r].icon).join('') || '—'; }
+function monChip(m, extra = '') {
+  const p = monPower(m);
+  return `<div class="mon"><span class="nm">${esc(m.name)}</span>
+    <span class="stat">침${p.inf} 운${p.car} 대${p.rea}</span>
+    <span class="pill" title="생산 능력">${prodIcons(m.species)}</span>
+    <span class="pill" title="${esc(abilityText(m.attack))}">${CONFIG.abilities[m.attack].name}</span>
+    <span class="pill" title="${esc(abilityText(m.special))}">${CONFIG.abilities[m.special].name}</span>
+    ${m.fruits.map(f => `<span class="pill acc">${CONFIG.fruits[f].name}</span>`).join('')}
+    ${extra}</div>`;
+}
+
+// --- 알 ---
+const eggName = spId => `${SPECIES[spId].name}의 알`;
+function rollEggSize(spId) {
+  const order = ['S', 'M', 'L']; const base = SPECIES[spId].eggSize; let i = order.indexOf(base); let delta = 0;
+  if (chance(CONFIG.eggs.sizeVarianceChance, 'run')) { delta = chance(0.5, 'run') ? 1 : -1; i = clamp(i + delta, 0, 2); if (order[i] === base) delta = 0; }
+  return { size: order[i], sizeDelta: delta };
+}
+function hatchRunsFor(egg) {
+  let n = SPECIES[egg.species].hatchRuns;
+  if (egg.sizeDelta < 0) n -= CONFIG.eggs.smallHatchBonus;
+  if (egg.damaged) n += CONFIG.eggs.damagedHatchPenalty;
+  return Math.max(1, n);
+}
+
+/* =====================================================================
+   UI 공통
+   ===================================================================== */
+const UI = { screen: 'storage' };
+const SCREENS = {};        // id -> { label, render() }
+const SCREEN_ORDER = [];
+function addScreen(id, label, render, order) { SCREENS[id] = { label, render, order }; }
+const ACT = {};            // data-act 핸들러
+const CHG = {};            // data-chg 핸들러
+
+function go(screen) { UI.screen = screen; render(); window.scrollTo(0, 0); }
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(toast._t); toast._t = setTimeout(() => t.style.display = 'none', 1800); }
+function openModal(html) { $('#modalBox').innerHTML = html; $('#modal').classList.add('show'); }
+function closeModal() { $('#modal').classList.remove('show'); }
+ACT.closeModal = () => closeModal();
+
+function renderTop() {
+  const r = W().resources;
+  $('#res').innerHTML = RES_KEYS.map(k => `<span title="${ALL_RES[k].name}">${ALL_RES[k].icon} ${ALL_RES[k].name} <b>${r[k] || 0}</b></span>`).join('');
+  const order = Object.entries(SCREENS).sort((a, b) => a[1].order - b[1].order);
+  $('#nav').innerHTML = order.map(([id, s]) => `<button class="${UI.screen === id ? 'on' : ''}" data-act="go" data-to="${id}">${s.label}</button>`).join('');
+}
+ACT.go = d => go(d.to);
+
+function render() {
+  if (!SCREENS[UI.screen]) UI.screen = 'storage';
+  renderTop();
+  $('#screen').innerHTML = SCREENS[UI.screen].render();
+  renderDebug();
+}
+
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-act]'); if (!el || el.disabled) return;
+  const fn = ACT[el.dataset.act]; if (!fn) return;
+  e.preventDefault();
+  fn(el.dataset, el);
+});
+document.addEventListener('change', e => {
+  const el = e.target.closest('[data-chg]'); if (!el) return;
+  const fn = CHG[el.dataset.chg]; if (fn) fn(el.dataset, el);
+});
+$('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
+
+/* =====================================================================
+   화면: 창고
+   ===================================================================== */
+function eggHatchStatus(egg) { return hatchStatus ? hatchStatus(egg) : { ok: false, text: '—' }; }
+let hatchStatus = null;  // [4] 거점 단계에서 채움
+
+addScreen('storage', '창고', () => {
+  const w = W();
+  const eggs = w.eggs.map(e => {
+    const st = eggHatchStatus(e);
+    return `<tr><td><b>${eggName(e.species)}</b> <span class="pill">${CONFIG.eggs.sizes[e.size]}</span>${e.damaged ? ' <span class="pill bad">손상</span>' : ''}</td>
+      <td class="tag">${esc(e.tag)}</td><td>${CONFIG.hatcheries[SPECIES[e.species].hatchery].name} · ${hatchRunsFor(e)}런</td>
+      <td class="${st.ok ? 'ok' : 'warn'}">${st.text}</td></tr>`;
+  }).join('') || '<tr><td colspan="4" class="dim">보관 중인 알이 없습니다.</td></tr>';
+  const mats = RES_KEYS.map(k => `<tr><td>${resLabel(k)}</td><td>${CONFIG.rare[k] ? '고급 · ' + REGION[CONFIG.rare[k].region].name : '일반'}</td><td><b>${w.resources[k] || 0}</b></td></tr>`).join('');
+  const mons = w.monsters.map(m => `<div>${monChip(m)}<div class="tag" style="margin:2px 0 0 8px">${esc(m.tag)}</div></div>`).join('') || '<span class="dim">몬스터가 없습니다.</span>';
+  const grave = w.graveyard.map(m => `<div class="dim">✝ ${esc(m.name)} — ${esc(m.deathNote || '')}${m.fruits.length ? ` (잃은 열매: ${m.fruits.map(f => CONFIG.fruits[f].name).join(', ')})` : ''}</div>`).join('');
+  return `<h2>창고</h2>
+  <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr))">
+    <div class="card"><h3>알 (${w.eggs.length})</h3><p class="dim" style="margin:0 0 6px">부화장을 지을 수 없는 알도 기한 없이 보관됩니다.</p>
+      <table><tr><th>알</th><th>사건</th><th>요구</th><th>부화 가능</th></tr>${eggs}</table></div>
+    <div class="card"><h3>재료</h3><table>${mats}</table></div>
+  </div>
+  <div class="card" style="margin-top:10px"><h3>몬스터 (${w.monsters.length})</h3><div class="col">${mons}</div>
+    ${grave ? `<h4>잃은 몬스터</h4>${grave}` : ''}</div>`;
+}, 60);
+
+/* =====================================================================
+   디버그 패널
+   ===================================================================== */
+const DEBUG_SECTIONS = [];   // 단계마다 섹션을 추가
+function renderDebug() {
+  const w = W();
+  $('#debug').innerHTML = `<h3 style="margin-top:0">🛠 디버그</h3>
+  <div class="dim">시드 <b>${esc(w.seed)}</b> · 런 ${w.runCount}회(시도 ${w.triedRunCount}) · 저장 ${Store.ok ? '<span class="ok">정상</span>' : '<span class="bad">불가(메모리만)</span>'}</div>
+  ${DEBUG_SECTIONS.map(f => `<div class="sec">${f()}</div>`).join('')}`;
+}
+DEBUG_SECTIONS.push(() => {
+  const w = W();
+  return `<b>자원 지급</b><div class="row" style="margin-top:4px">
+    ${RES_KEYS.map(k => `<button class="small" data-act="dbgGive" data-k="${k}" data-n="${CONFIG.rare[k] ? 3 : 10}">${ALL_RES[k].icon}+${CONFIG.rare[k] ? 3 : 10}</button>`).join('')}
+    <button class="small" data-act="dbgGive" data-k="all" data-n="50">전부 +50</button></div>`;
+});
+ACT.dbgGive = d => {
+  const n = +d.n;
+  if (d.k === 'all') RES_KEYS.forEach(k => gain(k, n)); else gain(d.k, n);
+  logDebug('give', d.k + '+' + n); afterChange();
+};
+DEBUG_SECTIONS.push(() => {
+  const w = W();
+  return `<b>시드</b><div class="row" style="margin-top:4px"><input id="dbgSeed" value="${esc(w.seed)}" style="width:110px">
+    <button class="small" data-act="dbgNewSeed">새 월드</button><button class="small" data-act="dbgReseed">현재 월드 난수만 재설정</button></div>
+    <div class="dim">같은 시드 + 같은 입력 = 같은 결과</div>`;
+});
+ACT.dbgNewSeed = () => { const s = $('#dbgSeed').value.trim() || CONFIG.defaultSeed; if (!confirm(`시드 "${s}"로 새 월드를 시작합니다. 현재 진행은 사라집니다.`)) return; newGame(s); UI.screen = 'storage'; render(); toast('새 월드 시작'); };
+ACT.dbgReseed = () => { const s = $('#dbgSeed').value.trim() || CONFIG.defaultSeed; W().seed = s; W().rng = initRng(s); logDebug('reseed', s); afterChange(); toast('난수 재설정'); };
+DEBUG_SECTIONS.push(() => {
+  const m = W().modules;
+  const radio = (key, opts) => opts.map(([v, l]) => `<button class="small ${m[key] === v ? 'on' : ''}" data-act="dbgMod" data-k="${key}" data-v="${v}">${l}</button>`).join('');
+  return `<b>모듈 토글</b>
+  <div class="row" style="margin-top:4px">잔성장 ${radio('residual', [[true, '켬'], [false, '끔']])}</div>
+  <div class="row" style="margin-top:4px">능력 배정 ${radio('abilityMode', [['random', 'A안 랜덤'], ['fixed', 'B안 고정']])}</div>
+  <div class="row" style="margin-top:4px">노동 ${radio('laborMode', [['auto', '자동'], ['manual', '수동']])}</div>
+  <div class="row" style="margin-top:4px">런 결과 ${radio('runMode', [['prob', '확률'], ['gm', '진행자']])}</div>`;
+});
+ACT.dbgMod = d => {
+  let v = d.v; if (v === 'true') v = true; if (v === 'false') v = false;
+  W().modules[d.k] = v; logDebug('module', d.k + '=' + v); afterChange();
+};
+DEBUG_SECTIONS.push(() => {
+  const w = W();
+  return `<b>멤버(월드 공유 구조)</b><div class="row" style="margin-top:4px">
+    <select data-chg="dbgMember">${w.members.map(p => `<option value="${p.id}" ${p.id === w.activeMember ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}</select>
+    <button class="small" data-act="dbgAddMember">멤버 추가</button></div>`;
+});
+CHG.dbgMember = (d, el) => { W().activeMember = el.value; afterChange(); };
+ACT.dbgAddMember = () => { const w = W(); const id = 'p' + (w.members.length + 1); w.members.push({ id, name: '멤버 ' + w.members.length }); afterChange(); };
+DEBUG_SECTIONS.push(() => `<b>세이브</b><div class="row" style="margin-top:4px">
+  <button class="small" data-act="saveExport">내보내기(JSON)</button><button class="small" data-act="saveImport">불러오기</button>
+  <button class="small" data-act="saveReset" style="border-color:var(--bad)">세이브 초기화</button></div>`);
+ACT.saveReset = () => { if (!confirm('세이브를 초기화하고 처음부터 시작합니다.')) return; Store.clear(); newGame(CONFIG.defaultSeed); UI.screen = 'storage'; render(); toast('초기화 완료'); };
+ACT.saveExport = () => {
+  const txt = JSON.stringify(S, null, 1);
+  openModal(`<h2>세이브 내보내기</h2><p class="dim">파일로 받거나 아래 텍스트를 복사하세요.</p>
+    <textarea style="width:100%;height:240px" readonly>${esc(txt)}</textarea>
+    <div class="row" style="margin-top:8px"><button class="primary" data-act="dlSave">파일 다운로드</button><button data-act="closeModal">닫기</button></div>`);
+};
+ACT.dlSave = () => download(`nest-save-${W().seed}.json`, JSON.stringify(S, null, 1), 'application/json');
+ACT.saveImport = () => openModal(`<h2>세이브 불러오기</h2><p class="dim">JSON 파일을 고르거나 텍스트를 붙여 넣으세요.</p>
+  <input type="file" accept=".json,application/json" data-chg="importFile"><textarea id="importTxt" style="width:100%;height:200px;margin-top:6px"></textarea>
+  <div class="row" style="margin-top:8px"><button class="primary" data-act="doImport">불러오기</button><button data-act="closeModal">취소</button></div>`);
+CHG.importFile = (d, el) => { const f = el.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => { $('#importTxt').value = r.result; }; r.readAsText(f); };
+ACT.doImport = () => {
+  try {
+    const data = JSON.parse($('#importTxt').value);
+    if (!data.world || !data.log) throw new Error('world/log 항목이 없습니다');
+    S = migrate(data); persist(); closeModal(); render(); toast('불러오기 완료');
+  } catch (e) { alert('불러오기 실패: ' + e.message); }
+};
+function download(name, text, type) {
+  try {
+    const url = URL.createObjectURL(new Blob([text], { type }));
+    const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 500);
+  } catch (e) { alert('다운로드가 막혀 있습니다. 텍스트를 복사해 주세요.'); }
+}
+// 저장 데이터에 빠진 항목을 기본값으로 채움 (CONFIG 변경 후 불러오기 대비)
+function migrate(data) {
+  const base = newWorld(data.world.seed || CONFIG.defaultSeed);
+  const w = Object.assign(base, data.world);
+  for (const k of RES_KEYS) if (w.resources[k] == null) w.resources[k] = 0;
+  for (const s of CONFIG.species) { if (!w.codex[s.id]) w.codex[s.id] = 'unseen'; if (w.pity[s.id] == null) w.pity[s.id] = 0; }
+  for (const k of Object.keys(CONFIG.residual)) if (w.residual[k] == null) w.residual[k] = 0;
+  w.modules = { ...CONFIG.modulesDefault, ...w.modules };
+  while (w.plots.length < CONFIG.base.plotCount) w.plots.push(null);
+  for (const st of RNG_STREAMS) if (w.rng[st] == null) w.rng[st] = hashStr(w.seed + ':' + st) | 0;
+  return { world: w, log: Object.assign(newLog(), data.log) };
+}
+
+function logDebug(kind, detail) { S.log.events.push({ t: new Date().toISOString(), type: 'debug', kind, detail, by: actor() }); if (S.log.events.length > 500) S.log.events.shift(); }
+function afterChange() { persist(); render(); }
+
+/* =====================================================================
+   부팅
+   ===================================================================== */
+function boot() {
+  const saved = Store.load();
+  if (saved && saved.world) { try { S = migrate(saved); } catch (e) { S = null; } }
+  if (!S) newGame(CONFIG.defaultSeed);
+  render();
+}
+window.addEventListener('DOMContentLoaded', boot);
+</script>
+</body>
+</html>
