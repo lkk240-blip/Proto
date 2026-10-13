@@ -1406,6 +1406,47 @@ ACT.dbgMod = d => {
 UI.screen = 'base';
 
 /* =====================================================================
+   [5] 공용 잔성장 모듈 · 모듈 토글 표시
+   - 월드 전체에 적용. 모듈을 끄면 구매 내역은 남지만 효과가 전부 0이 됩니다.
+   - 성장 대상 제외: 알 소지 시 감지 배율, 알 운반 페널티, 소란도 임계값 (CONFIG.run.locked)
+   ===================================================================== */
+function moduleSummary() {
+  const m = W().modules;
+  return `<span class="pill ${m.residual ? 'acc' : ''}">잔성장 ${m.residual ? 'ON' : 'OFF'}</span>
+    <span class="pill">능력 ${m.abilityMode === 'random' ? 'A안 랜덤' : 'B안 고정'}</span>
+    <span class="pill">노동 ${m.laborMode === 'auto' ? '자동' : '수동'}</span>
+    <span class="pill">${m.runMode === 'prob' ? '확률 모드' : '진행자 모드'}</span>`;
+}
+baseBanners.push(() => `<div class="row" style="margin-bottom:8px">${moduleSummary()}</div>`);
+function residualEffectText(k, lv) {
+  const C = CONFIG.run;
+  return { bag: `가방칸 +${lv}`, dash: `도주 +${pct(C.dashEscape * lv)}, 다운 −${pct(C.dashDown * lv)}`, revive: `소생 +${pct(C.revivePerLevel * lv)}`, discount: `입장 재료 −${lv}` }[k] || '';
+}
+baseExtras.push(() => {
+  const w = W();
+  if (!w.modules.residual) return `<div class="card" style="margin-top:10px;opacity:.6"><h3 style="margin-top:0">🌱 공용 잔성장</h3><span class="dim">모듈이 꺼져 있습니다(업그레이드 없는 버전 비교용). 디버그 패널에서 켤 수 있습니다.</span></div>`;
+  const rows = Object.entries(CONFIG.residual).map(([k, def]) => {
+    const lv = w.residual[k] || 0, cost = def.costs[lv];
+    return `<tr><td><b>${def.name}</b><div class="dim" style="font-size:12px">${def.desc}</div></td><td>${lv}/${def.max}${lv ? `<div class="ok" style="font-size:12px">${residualEffectText(k, lv)}</div>` : ''}</td>
+      <td>${lv < def.max ? `<button class="small" data-act="buyResidual" data-k="${k}" ${canPay(cost) ? '' : 'disabled'}>구매</button> ${costText(cost)}` : '<span class="ok">최대</span>'}</td></tr>`;
+  }).join('');
+  return `<div class="card" style="margin-top:10px"><h3 style="margin-top:0">🌱 공용 잔성장 <span class="dim" style="font-size:12px">월드 전체 적용 · 런에서 체감되는 항목만</span></h3><table>${rows}</table>
+    <div class="dim" style="font-size:12px;margin-top:4px">성장 대상 아님: 알 소지 시 감지 배율 ×${CONFIG.run.locked.eggDetectMult}, 알 운반 페널티, 소란도 임계값 ${CONFIG.run.locked.noiseThreshold}</div></div>`;
+});
+ACT.buyResidual = d => {
+  const w = W(), def = CONFIG.residual[d.k], lv = w.residual[d.k] || 0, cost = def.costs[lv];
+  if (!w.modules.residual || lv >= def.max || !canPay(cost)) return;
+  pay(cost); w.residual[d.k] = lv + 1; playerAction('residual_buy', d.k); afterChange(); toast(`${def.name} → ${lv + 1}단계`);
+};
+prepPanels.push(() => {
+  const w = W();
+  if (!w.modules.residual) return '';
+  const on = Object.keys(CONFIG.residual).filter(k => residualLevel(k) > 0);
+  return on.length ? `<div class="card"><h3>🌱 적용 중인 잔성장</h3>${on.map(k => `<div>${CONFIG.residual[k].name} ${residualLevel(k)}단계 — <span class="ok">${residualEffectText(k, residualLevel(k))}</span></div>`).join('')}</div>` : '';
+});
+DEBUG_SECTIONS.push(() => `<div class="dim">능력 배정 방식은 이후 부화하는 몬스터부터 적용됩니다. 잔성장 끄기는 구매 내역을 지우지 않고 효과만 0으로 만듭니다.</div>`);
+
+/* =====================================================================
    부팅
    ===================================================================== */
 function boot() {
