@@ -52,6 +52,8 @@ table{border-collapse:collapse;width:100%} td,th{border-bottom:1px solid var(--l
 .mapcard{cursor:pointer;transition:border-color .15s}
 .mapcard:hover{border-color:#6b6f7a}
 .mapcard.sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.bar{height:8px;background:var(--panel2);border-radius:4px;overflow:hidden;margin:6px 0 2px}.bar i{display:block;height:100%;background:var(--accent)}
+.plot a{color:var(--dim)}
 .danger{color:var(--bad);letter-spacing:2px}
 .stat{font-family:ui-monospace,monospace;font-size:12px;color:var(--dim)}
 </style>
@@ -477,7 +479,8 @@ function addScreen(id, label, render, order) { SCREENS[id] = { label, render, or
 const ACT = {};            // data-act 핸들러
 const CHG = {};            // data-chg 핸들러
 
-function go(screen) { UI.screen = screen; render(); window.scrollTo(0, 0); }
+const goHooks = [];   // (screen) — 화면 전환 직후
+function go(screen) { UI.screen = screen; render(); window.scrollTo(0, 0); goHooks.forEach(f => f(screen)); }
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(toast._t); toast._t = setTimeout(() => t.style.display = 'none', 1800); }
 function openModal(html) { $('#modalBox').innerHTML = html; $('#modal').classList.add('show'); }
 function closeModal() { $('#modal').classList.remove('show'); }
@@ -523,7 +526,9 @@ addScreen('storage', '창고', () => {
     return `<tr><td><b>${eggName(e.species)}</b> <span class="pill">${CONFIG.eggs.sizes[e.size]}</span>${e.damaged ? ' <span class="pill bad">손상</span>' : ''}</td>
       <td class="tag">${esc(e.tag)}</td><td>${CONFIG.hatcheries[SPECIES[e.species].hatchery].name} · ${hatchRunsFor(e)}런</td>
       <td class="${st.ok ? 'ok' : 'warn'}">${st.text}</td></tr>`;
-  }).join('') || '<tr><td colspan="4" class="dim">보관 중인 알이 없습니다.</td></tr>';
+  }).join('') + w.plots.filter(p => p && p.type === 'hatch').map(p => `<tr class="dim"><td>${eggName(p.egg.species)} <span class="pill">${CONFIG.eggs.sizes[p.egg.size]}</span></td>
+      <td class="tag">${esc(p.egg.tag)}</td><td>${CONFIG.hatcheries[p.kind].name}</td><td class="ok">부화 중 ${p.progress}/${p.need}런</td></tr>`).join('')
+    || '<tr><td colspan="4" class="dim">보관 중인 알이 없습니다.</td></tr>';
   const mats = RES_KEYS.map(k => `<tr><td>${resLabel(k)}</td><td>${CONFIG.rare[k] ? '고급 · ' + REGION[CONFIG.rare[k].region].name : '일반'}</td><td><b>${w.resources[k] || 0}</b></td></tr>`).join('');
   const mons = w.monsters.map(m => `<div>${monChip(m)}<div class="tag" style="margin:2px 0 0 8px">${esc(m.tag)}</div></div>`).join('') || '<span class="dim">몬스터가 없습니다.</span>';
   const grave = w.graveyard.map(m => `<div class="dim">✝ ${esc(m.name)} — ${esc(m.deathNote || '')}${m.fruits.length ? ` (잃은 열매: ${m.fruits.map(f => CONFIG.fruits[f].name).join(', ')})` : ''}</div>`).join('');
@@ -1187,6 +1192,218 @@ ACT.dbgEgg = () => {
   if (w.codex[sp] === 'unseen') w.codex[sp] = 'seen';
   logDebug('egg', sp); afterChange();
 };
+
+/* =====================================================================
+   [4] 거점: 메인 거점 · 생산 건물 · 부화장 · 몬스터 노동
+   ===================================================================== */
+const hqDef = (lv = W().hqLevel) => CONFIG.hq.levels[lv - 1];
+const prodCount = kind => W().plots.filter(p => p && p.type === 'prod' && p.prod === kind).length;
+const hatchUnlockLevel = h => CONFIG.hq.levels.findIndex(l => l.hatcheries.includes(h)) + 1;
+const canProduce = (m, res) => SPECIES[m.species].prod.includes(res);
+
+// 노동 배치: 자동 = 파티가 아닌 몬스터를 작업 슬롯에 채움 / 수동 = 플레이어가 지정한 그대로
+function autoAssign(excludeIds) {
+  const w = W(), cap = hqDef().workSlots, res = {}, taken = new Set();
+  const plots = w.plots.map((p, i) => ({ p, i })).filter(x => x.p && x.p.type === 'prod');
+  plots.forEach(x => res[x.i] = []);
+  // 생산 능력이 적은 몬스터부터 배치해 여러 건물이 고루 돌게 함
+  const free = w.monsters.filter(m => !excludeIds.includes(m.id)).sort((a, b) => SPECIES[a.species].prod.length - SPECIES[b.species].prod.length);
+  let used = 0, moved = true;
+  while (used < cap && moved) {
+    moved = false;
+    for (const x of plots) {
+      if (used >= cap) break;
+      if (res[x.i].length >= CONFIG.production[x.p.prod].slots) continue;
+      const m = free.find(m => !taken.has(m.id) && canProduce(m, x.p.prod));
+      if (m) { res[x.i].push(m.id); taken.add(m.id); used++; moved = true; }
+    }
+  }
+  return res;
+}
+function assignments(excludeIds = []) {
+  if (W().modules.laborMode === 'auto') return autoAssign(excludeIds);
+  const res = {}; W().plots.forEach((p, i) => { if (p && p.type === 'prod') res[i] = p.assigned.filter(id => getMon(id)); });
+  return res;
+}
+const usedSlots = asg => Object.values(asg).reduce((a, l) => a + l.length, 0);
+function workStatus(m) {
+  const asg = assignments(W().modules.laborMode === 'auto' ? UI.party : []);
+  const i = Object.keys(asg).find(k => asg[k].includes(m.id));
+  if (W().modules.laborMode === 'manual' && i != null && UI.party.includes(m.id)) return `<span class="warn">⚠ ${CONFIG.production[W().plots[i].prod].name} 배치 중 — 출동하면 이번 런 생산 안 함</span>`;
+  if (i != null) return `작업: ${CONFIG.production[W().plots[i].prod].name}`;
+  return UI.party.includes(m.id) ? '' : '대기';
+}
+killHooks.push(m => W().plots.forEach(p => { if (p && p.type === 'prod') p.assigned = p.assigned.filter(id => id !== m.id); }));
+
+// ---------- 생산 틱 · 부화 진행 (시도한 런이 끝날 때만) ----------
+const hatchHooks = [];
+function hatchEgg(i) {
+  const w = W(), pl = w.plots[i], egg = pl.egg;
+  const m = createMonster(egg.species, { tag: egg.tag, bigEgg: egg.sizeDelta > 0, cycle: egg.cycle });
+  m.fromEgg = egg.id; m.hatchedRun = w.runCount; m.eggDamaged = egg.damaged;
+  w.monsters.push(m); w.codex[egg.species] = 'owned'; w.plots[i] = null;
+  hatchHooks.forEach(f => f(m, egg));
+  return m;
+}
+afterRunHooks.unshift((r, ctx) => {   // 보드 갱신보다 먼저 (부화로 도감이 바뀌므로)
+  if (!r.attempted) return;
+  const w = W(), asg = assignments(ctx.partyIds);
+  r.prod = { lines: [], skipped: [], total: {} };
+  w.plots.forEach((p, i) => {
+    if (!p || p.type !== 'prod') return;
+    const def = CONFIG.production[p.prod];
+    const ids = (asg[i] || []).filter(id => getMon(id));
+    const working = ids.filter(id => !ctx.partyIds.includes(id));
+    ids.filter(id => ctx.partyIds.includes(id)).forEach(id => r.prod.skipped.push(getMon(id).name));
+    const amount = working.length * def.perMonster;
+    if (amount) { gain(def.res, amount); r.prod.total[def.res] = (r.prod.total[def.res] || 0) + amount; }
+    r.prod.lines.push({ name: def.name, n: working.length, res: def.res, amount });
+  });
+  r.incubating = [];
+  w.plots.forEach((p, i) => {
+    if (!p || p.type !== 'hatch') return;
+    p.progress++;
+    if (p.progress >= p.need) { const m = hatchEgg(i); r.hatched.push({ id: m.id, name: m.name, species: m.species, attack: m.attack, special: m.special, tag: m.tag, mode: m.abilityMode, big: m.bigEgg }); }
+    else r.incubating.push({ name: eggName(p.egg.species), progress: p.progress, need: p.need });
+  });
+});
+resultSections.push(r => {
+  if (!r.attempted) return `<div class="card" style="margin-top:10px"><h3>생산 틱</h3><span class="dim">시도하지 않은 런이라 생산·부화 진행·보드 갱신이 없습니다.</span></div>`;
+  const p = r.prod || { lines: [], skipped: [], total: {} };
+  const lines = p.lines.map(l => `<div>${esc(l.name)}: ${l.n}마리 → ${l.amount ? `<b class="ok">${resLabel(l.res)} +${l.amount}</b>` : '<span class="dim">생산 없음</span>'}</div>`).join('') || '<span class="dim">생산 건물이 없습니다.</span>';
+  const hatched = r.hatched.map(h => `<div class="card" style="background:#20261c;border-color:var(--ok);margin-top:6px">🐣 <b>${esc(h.name)}</b> 부화! ${h.big ? '<span class="pill acc">큰 알 보너스</span>' : ''}
+    <div>공격 <b>${CONFIG.abilities[h.attack].name}</b> <span class="dim">(${abilityText(h.attack)})</span> · 특수 <b>${CONFIG.abilities[h.special].name}</b> <span class="dim">(${abilityText(h.special)})</span>
+    <span class="pill">${h.mode === 'random' ? 'A안 랜덤 배정' : 'B안 고정'}</span></div><div class="tag">“${esc(h.tag)}”</div></div>`).join('');
+  const inc = (r.incubating || []).map(x => `<span class="pill">${esc(x.name)} ${x.progress}/${x.need}런</span>`).join(' ');
+  return `<div class="card" style="margin-top:10px"><h3>생산 틱</h3>${lines}
+    ${p.skipped.length ? `<div class="warn">출동해서 생산하지 않음: ${p.skipped.map(esc).join(', ')}</div>` : ''}
+    ${hatched}${inc ? `<div style="margin-top:6px">부화 진행: ${inc}</div>` : ''}
+    <div class="dim" style="margin-top:6px">${r.boardRefreshed ? '두더지 굴 보드가 새로 갱신되었습니다.' : ''}</div></div>`;
+});
+// 부화 순간 공개 팝업
+afterRunHooks.push(r => { if (r.hatched.length) UI.pendingReveal = r.hatched.slice(); });
+goHooks.push(screen => {
+  if (screen === 'result' && UI.pendingReveal && UI.pendingReveal.length) {
+    const hs = UI.pendingReveal; UI.pendingReveal = null;
+    openModal(`<h2>🐣 부화!</h2>${hs.map(h => `<div class="card" style="margin-bottom:8px"><b style="font-size:16px">${esc(h.name)}</b>
+      <div style="margin-top:6px">공격: <b class="ok">${CONFIG.abilities[h.attack].name}</b> — ${abilityText(h.attack)}</div>
+      <div>특수: <b class="ok">${CONFIG.abilities[h.special].name}</b> — ${abilityText(h.special)}</div>
+      <div class="dim">${h.mode === 'random' ? `A안: 공격 [${SPECIES[h.species].attacks.map(a => CONFIG.abilities[a].name).join(' / ')}], 특수 [${SPECIES[h.species].specials.map(a => CONFIG.abilities[a].name).join(' / ')}] 중 랜덤` : 'B안: 종마다 고정'}</div>
+      <div class="tag">“${esc(h.tag)}”</div></div>`).join('')}<button class="primary" data-act="closeModal">확인</button>`);
+  }
+});
+
+// ---------- 창고: 부화 가능 여부 ----------
+hatchStatus = egg => {
+  const h = SPECIES[egg.species].hatchery;
+  if (!hqDef().hatcheries.includes(h)) return { ok: false, text: `${CONFIG.hatcheries[h].name}: 메인 거점 Lv.${hatchUnlockLevel(h)} 필요` };
+  if (!W().plots.includes(null)) return { ok: false, text: '빈 터 없음' };
+  if (!canPay(CONFIG.hatcheries[h].cost)) return { ok: false, text: '건설 재료 부족' };
+  return { ok: true, text: '지금 부화장 건설 가능' };
+};
+
+// ---------- 거점 화면 ----------
+addScreen('base', '거점', () => {
+  const w = W(), def = hqDef(), next = CONFIG.hq.levels[w.hqLevel], auto = w.modules.laborMode === 'auto';
+  const asg = assignments(auto ? UI.party : []), used = usedSlots(asg);
+  const unlockTxt = l => `작업 슬롯 ${l.workSlots} · 생산 ${Object.entries(l.prodMax).filter(([, n]) => n).map(([k, n]) => `${CONFIG.production[k].name}×${n}`).join(', ')} · ${l.hatcheries.map(h => CONFIG.hatcheries[h].name).join(', ')}`;
+  const regs = unlockedRegions();
+  const hq = `<div class="card"><h3 style="margin-top:0">🏰 메인 거점 Lv.${w.hqLevel}<span class="dim"> / ${CONFIG.hq.levels.length}</span></h3>
+    <div>작업 슬롯 <b>${used}/${def.workSlots}</b> <span class="pill">${auto ? '자동 배치' : '수동 배치'}</span></div>
+    <div class="dim" style="font-size:12px">${unlockTxt(def)}</div>
+    ${next ? `<h4>다음 단계 Lv.${w.hqLevel + 1}</h4><div class="dim" style="font-size:12px">${unlockTxt(next)}</div>
+      <div class="row" style="margin-top:6px"><button data-act="hqUp" ${canPay(next.cost) ? '' : 'disabled'}>업그레이드</button> ${costText(next.cost)}</div>` : '<div class="ok" style="margin-top:6px">최고 단계</div>'}</div>`;
+  const burrow = `<div class="card"><h3 style="margin-top:0">🕳 두더지 굴</h3>
+    ${CONFIG.regions.map((r, i) => `<div>${regs.includes(r.id) ? '✅' : '🔒'} ${r.name} — ${i === 0 ? '무료' : regs.includes(r.id) ? `입장 ${costText(entryCostFor(r.id))}` : `${resLabel(CONFIG.regions[i - 1].rare)}을(를) 얻으면 해금`}</div>`).join('')}
+    <button class="primary" style="margin-top:8px" data-act="go" data-to="burrow">맵 고르러 가기</button></div>`;
+  const plots = w.plots.map((p, i) => plotCard(p, i, asg, used, def)).join('');
+  const roster = w.monsters.map(m => monChip(m, `<span class="dim">${workStatus(m)}</span>`)).join('') || '<span class="dim">몬스터가 없습니다.</span>';
+  return `<h2>거점</h2>${baseBanners.map(f => f()).join('')}
+  <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr))">${hq}${burrow}</div>
+  <h3>건설 터 (${w.plots.filter(Boolean).length}/${w.plots.length})</h3>
+  <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(250px,1fr))">${plots}</div>
+  ${baseExtras.map(f => f()).join('')}
+  <div class="card" style="margin-top:10px"><h3 style="margin-top:0">몬스터 (${w.monsters.length})</h3><div class="col">${roster}</div></div>`;
+}, 0);
+const baseBanners = [], baseExtras = [];
+function plotCard(p, i, asg, used, def) {
+  const w = W();
+  if (!p) {
+    const opts = [];
+    for (const [k, pd] of Object.entries(CONFIG.production)) {
+      const max = def.prodMax[k] || 0, have = prodCount(k);
+      const why = !max ? `Lv.${CONFIG.hq.levels.findIndex(l => l.prodMax[k] > 0) + 1} 필요` : have >= max ? `최대 ${max}개` : !canPay(pd.cost) ? '재료 부족' : '';
+      opts.push(`<option value="prod:${k}" ${why ? 'disabled' : ''}>${pd.name} (${costPlain(pd.cost)})${why ? ' — ' + why : ''}</option>`);
+    }
+    for (const e of w.eggs) {
+      const h = SPECIES[e.species].hatchery, hd = CONFIG.hatcheries[h];
+      const why = !def.hatcheries.includes(h) ? `Lv.${hatchUnlockLevel(h)} 필요` : !canPay(hd.cost) ? '재료 부족' : '';
+      opts.push(`<option value="hatch:${e.id}" ${why ? 'disabled' : ''}>${hd.name} ← ${eggName(e.species)}${e.damaged ? '(손상)' : ''} (${costPlain(hd.cost)})${why ? ' — ' + why : ''}</option>`);
+    }
+    return `<div class="card plot" style="border-style:dashed"><div class="dim">빈 터 ${i + 1}</div>
+      <select id="build${i}" style="width:100%;margin:6px 0">${opts.join('')}</select><button data-act="build" data-i="${i}">건설</button></div>`;
+  }
+  if (p.type === 'hatch') {
+    return `<div class="card plot" style="border-color:#7a6a3a"><b>🥚 ${CONFIG.hatcheries[p.kind].name}</b><div>${eggName(p.egg.species)} <span class="pill">${CONFIG.eggs.sizes[p.egg.size]}</span>${p.egg.damaged ? ' <span class="pill bad">손상</span>' : ''}</div>
+      <div class="tag" style="font-size:12px">“${esc(p.egg.tag)}”</div>
+      <div class="bar"><i style="width:${Math.round(p.progress / p.need * 100)}%"></i></div><div class="dim">부화까지 ${p.need - p.progress}런 (시도한 런마다 진행)</div></div>`;
+  }
+  const pd = CONFIG.production[p.prod], ids = asg[i] || [], auto = W().modules.laborMode === 'auto';
+  const chips = ids.map(id => { const m = getMon(id); return m ? `<span class="pill acc">${esc(m.name)}${auto ? '' : ` <a href="#" data-act="unassign" data-i="${i}" data-m="${id}">✕</a>`}</span>` : ''; }).join(' ') || '<span class="dim">배치된 몬스터 없음</span>';
+  let add = '';
+  if (!auto && ids.length < pd.slots) {
+    const taken = new Set(Object.values(asg).flat());
+    const cands = W().monsters.filter(m => !taken.has(m.id) && canProduce(m, p.prod));
+    const full = used >= def.workSlots;
+    add = `<div class="row" style="margin-top:6px"><select id="asg${i}">${cands.map(m => `<option value="${m.id}">${esc(m.name)}${UI.party.includes(m.id) ? ' (출동 예정)' : ''}</option>`).join('') || '<option value="">배치 가능한 몬스터 없음</option>'}</select>
+      <button class="small" data-act="assign" data-i="${i}" ${cands.length && !full ? '' : 'disabled'}>배치</button>${full ? '<span class="warn">작업 슬롯 가득</span>' : ''}</div>`;
+  }
+  return `<div class="card plot"><b>${CONFIG.common[pd.res].icon} ${pd.name}</b> <span class="dim">${ids.length}/${pd.slots}</span>
+    <div style="margin:4px 0">${chips}</div><div class="dim">다음 시도한 런: ${resLabel(pd.res)} +${ids.filter(id => !(auto ? false : UI.party.includes(id))).length * pd.perMonster}
+    <span style="font-size:11px">(${CONFIG.common[pd.res].name} 생산 능력 몬스터 1마리당 ${pd.perMonster})</span></div>${add}
+    <div style="text-align:right"><a href="#" class="dim" style="font-size:11px" data-act="demolish" data-i="${i}">철거</a></div></div>`;
+}
+ACT.build = d => {
+  const i = +d.i, v = $('#build' + i).value; if (!v) return;
+  const w = W(), [kind, id] = v.split(':'); if (w.plots[i]) return;
+  if (kind === 'prod') {
+    const pd = CONFIG.production[id]; if (!canPay(pd.cost) || prodCount(id) >= (hqDef().prodMax[id] || 0)) return;
+    pay(pd.cost); w.plots[i] = { type: 'prod', prod: id, assigned: [] }; playerAction('build_prod', id);
+  } else {
+    const egg = w.eggs.find(e => e.id === id); if (!egg) return;
+    const h = SPECIES[egg.species].hatchery, hd = CONFIG.hatcheries[h];
+    if (!hqDef().hatcheries.includes(h) || !canPay(hd.cost)) return;
+    pay(hd.cost); w.eggs = w.eggs.filter(e => e.id !== id);
+    w.plots[i] = { type: 'hatch', kind: h, egg, progress: 0, need: hatchRunsFor(egg) }; playerAction('build_hatchery', egg.species);
+  }
+  afterChange();
+};
+ACT.assign = d => {
+  const i = +d.i, id = $('#asg' + i).value, p = W().plots[i], m = getMon(id);
+  if (!id || !p || !m || !canProduce(m, p.prod) || p.assigned.length >= CONFIG.production[p.prod].slots) return;
+  if (usedSlots(assignments()) >= hqDef().workSlots) { toast('작업 슬롯이 가득 찼습니다'); return; }
+  W().plots.forEach(q => { if (q && q.type === 'prod') q.assigned = q.assigned.filter(x => x !== id); });
+  p.assigned.push(id); playerAction('assign', id); afterChange();
+};
+ACT.unassign = d => { const p = W().plots[+d.i]; p.assigned = p.assigned.filter(x => x !== d.m); playerAction('unassign', d.m); afterChange(); };
+ACT.demolish = d => {
+  const p = W().plots[+d.i]; if (!p) return;
+  if (!confirm('이 건물을 철거합니다. 재료는 돌려받지 못합니다.')) return;
+  W().plots[+d.i] = null; playerAction('demolish', p.prod); afterChange();
+};
+ACT.hqUp = () => {
+  const w = W(), next = CONFIG.hq.levels[w.hqLevel]; if (!next || !canPay(next.cost)) return;
+  pay(next.cost); w.hqLevel++; playerAction('hq_upgrade', w.hqLevel); afterChange(); toast(`메인 거점 Lv.${w.hqLevel}`);
+};
+// 수동 노동으로 바꾸면 현재 자동 배치를 출발점으로 복사
+const _dbgMod = ACT.dbgMod;
+ACT.dbgMod = d => {
+  if (d.k === 'laborMode' && d.v === 'manual' && W().modules.laborMode !== 'manual') {
+    const asg = autoAssign([]); W().plots.forEach((p, i) => { if (p && p.type === 'prod') p.assigned = (asg[i] || []).slice(); });
+  }
+  _dbgMod(d);
+};
+UI.screen = 'base';
 
 /* =====================================================================
    부팅
