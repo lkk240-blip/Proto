@@ -7,7 +7,7 @@
 <style>
 :root{
   --bg:#15171c; --panel:#1e2128; --panel2:#262a33; --line:#343a46; --text:#e8e9ec; --dim:#9aa0ab;
-  --accent:#e0a53b; --bang:#ff5d73; --ok:#5fc27e; --warn:#e6c14f; --bad:#e2574c; --info:#6aa8e8;
+  --accent:#e0a53b;color-scheme:dark; --bang:#ff5d73; --ok:#5fc27e; --warn:#e6c14f; --bad:#e2574c; --info:#6aa8e8;
 }
 *{box-sizing:border-box}
 html,body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 "Pretendard","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif}
@@ -27,7 +27,7 @@ h2{margin:0 0 10px;font-size:18px} h3{margin:12px 0 6px;font-size:15px} h4{margi
 .pill{display:inline-block;padding:0 7px;border-radius:999px;border:1px solid var(--line);font-size:12px;color:var(--dim);white-space:nowrap}
 .pill.acc{color:var(--accent);border-color:var(--accent)}
 .tag{font-style:italic;color:#d9c7a3}
-#topbar{position:sticky;top:0;z-index:5;background:#101216;border-bottom:1px solid var(--line);padding:8px 14px;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+#topbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:#101216;border-bottom:1px solid var(--line);padding:8px 14px;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
 #topbar .title{font-weight:800;color:var(--accent)}
 #res{display:flex;gap:10px;flex-wrap:wrap}
 #res span{white-space:nowrap}
@@ -569,7 +569,7 @@ DEBUG_SECTIONS.push(() => {
     <button class="small" data-act="dbgNewSeed">새 월드</button><button class="small" data-act="dbgReseed">현재 월드 난수만 재설정</button></div>
     <div class="dim">같은 시드 + 같은 입력 = 같은 결과</div>`;
 });
-ACT.dbgNewSeed = () => { const s = $('#dbgSeed').value.trim() || CONFIG.defaultSeed; if (!confirm(`시드 "${s}"로 새 월드를 시작합니다. 현재 진행은 사라집니다.`)) return; newGame(s); UI.screen = 'storage'; render(); toast('새 월드 시작'); };
+ACT.dbgNewSeed = () => { const s = $('#dbgSeed').value.trim() || CONFIG.defaultSeed; askConfirm(`시드 "${s}"로 새 월드를 시작합니다. 현재 진행은 사라집니다.`, () => { newGame(s); UI.screen = 'base'; render(); toast('새 월드 시작'); }); };
 ACT.dbgReseed = () => { const s = $('#dbgSeed').value.trim() || CONFIG.defaultSeed; W().seed = s; W().rng = initRng(s); logDebug('reseed', s); afterChange(); toast('난수 재설정'); };
 DEBUG_SECTIONS.push(() => {
   const m = W().modules;
@@ -595,14 +595,14 @@ ACT.dbgAddMember = () => { const w = W(); const id = 'p' + (w.members.length + 1
 DEBUG_SECTIONS.push(() => `<b>세이브</b><div class="row" style="margin-top:4px">
   <button class="small" data-act="saveExport">내보내기(JSON)</button><button class="small" data-act="saveImport">불러오기</button>
   <button class="small" data-act="saveReset" style="border-color:var(--bad)">세이브 초기화</button></div>`);
-ACT.saveReset = () => { if (!confirm('세이브를 초기화하고 처음부터 시작합니다.')) return; Store.clear(); newGame(CONFIG.defaultSeed); UI.screen = 'storage'; render(); toast('초기화 완료'); };
+ACT.saveReset = () => { askConfirm('세이브를 초기화하고 처음부터 시작합니다.', () => { Store.clear(); newGame(CONFIG.defaultSeed); UI.screen = 'base'; render(); toast('초기화 완료'); }); };
 ACT.saveExport = () => {
   const txt = JSON.stringify(S, null, 1);
   openModal(`<h2>세이브 내보내기</h2><p class="dim">파일로 받거나 아래 텍스트를 복사하세요.</p>
     <textarea style="width:100%;height:240px" readonly>${esc(txt)}</textarea>
     <div class="row" style="margin-top:8px"><button class="primary" data-act="dlSave">파일 다운로드</button><button data-act="closeModal">닫기</button></div>`);
 };
-ACT.dlSave = () => download(`nest-save-${W().seed}.json`, JSON.stringify(S, null, 1), 'application/json');
+ACT.dlSave = () => tryDownload(`nest-save-${W().seed}.json`, JSON.stringify(S, null, 1), 'application/json');
 ACT.saveImport = () => openModal(`<h2>세이브 불러오기</h2><p class="dim">JSON 파일을 고르거나 텍스트를 붙여 넣으세요.</p>
   <input type="file" accept=".json,application/json" data-chg="importFile"><textarea id="importTxt" style="width:100%;height:200px;margin-top:6px"></textarea>
   <div class="row" style="margin-top:8px"><button class="primary" data-act="doImport">불러오기</button><button data-act="closeModal">취소</button></div>`);
@@ -612,15 +612,35 @@ ACT.doImport = () => {
     const data = JSON.parse($('#importTxt').value);
     if (!data.world || !data.log) throw new Error('world/log 항목이 없습니다');
     S = migrate(data); persist(); closeModal(); render(); toast('불러오기 완료');
-  } catch (e) { alert('불러오기 실패: ' + e.message); }
+  } catch (e) { toast('불러오기 실패: ' + e.message); }
 };
-function download(name, text, type) {
+// 파일 저장: 브라우저가 다운로드를 막는 환경(Artifact 등)도 있어 항상 텍스트 복사 창을 함께 띄웁니다.
+function tryDownload(name, text, type) {
   try {
     const url = URL.createObjectURL(new Blob([text], { type }));
     const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click();
     setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 500);
-  } catch (e) { alert('다운로드가 막혀 있습니다. 텍스트를 복사해 주세요.'); }
+  } catch (e) { toast('파일 저장이 막혀 있습니다. 복사해서 쓰세요.'); }
 }
+function download(name, text, type) {
+  UI._dl = { name, text, type };
+  openModal(`<h2>${esc(name)}</h2><p class="dim">파일로 받거나, 복사해서 메모장·스프레드시트에 붙여 넣으세요. (CSV는 엑셀/구글 시트에 그대로 붙여 넣기 가능)</p>
+    <textarea id="dlTxt" style="width:100%;height:240px" readonly>${esc(text.replace(/^\uFEFF/, ''))}</textarea>
+    <div class="row" style="margin-top:8px"><button class="primary" data-act="dlCopy">복사</button><button data-act="dlFile">파일로 저장</button><button data-act="closeModal">닫기</button></div>`);
+}
+ACT.dlCopy = () => {
+  const t = $('#dlTxt');
+  const sel = () => { t.focus(); t.select(); toast('텍스트를 선택했습니다. Ctrl+C로 복사하세요.'); };
+  try { navigator.clipboard.writeText(t.value).then(() => toast('복사했습니다'), sel); } catch (e) { sel(); }
+};
+ACT.dlFile = () => { const d = UI._dl; if (d) tryDownload(d.name, d.text, d.type); };
+// 페이지 안 확인 창 (confirm()이 막힌 환경 대응)
+function askConfirm(msg, onYes) {
+  UI._confirm = onYes;
+  openModal(`<p style="font-size:15px">${esc(msg)}</p><div class="row"><button class="primary" data-act="confirmYes">확인</button><button data-act="closeModal">취소</button></div>`);
+}
+ACT.confirmYes = () => { const f = UI._confirm; UI._confirm = null; closeModal(); if (f) f(); };
+
 // 저장 데이터에 빠진 항목을 기본값으로 채움 (CONFIG 변경 후 불러오기 대비)
 function migrate(data) {
   const base = newWorld(data.world.seed || CONFIG.defaultSeed);
@@ -945,8 +965,10 @@ ACT.toggleParty = d => {
 ACT.equip = d => {
   const m = getMon(d.m), f = CONFIG.fruits[d.f];
   if (!m || m.fruits.length >= CONFIG.fruitSlots || !canPay(f.cost)) return;
-  if (!confirm(`${m.name}에게 ${f.name}을(를) 장착합니다. 해제할 수 없고, 죽으면 함께 사라집니다.`)) return;
-  pay(f.cost); m.fruits.push(d.f); playerAction('equip_fruit', d.f); afterChange();
+  askConfirm(`${m.name}에게 ${f.name}을(를) 장착합니다. 해제할 수 없고, 죽으면 함께 사라집니다.`, () => {
+    if (m.fruits.length >= CONFIG.fruitSlots || !canPay(f.cost)) return;
+    pay(f.cost); m.fruits.push(d.f); playerAction('equip_fruit', d.f); afterChange();
+  });
 };
 ACT.setPlan = d => { UI.plan = d.v; render(); };
 CHG.target = (d, el) => { UI.target = +el.value; render(); };
@@ -1388,8 +1410,7 @@ ACT.assign = d => {
 ACT.unassign = d => { const p = W().plots[+d.i]; p.assigned = p.assigned.filter(x => x !== d.m); playerAction('unassign', d.m); afterChange(); };
 ACT.demolish = d => {
   const p = W().plots[+d.i]; if (!p) return;
-  if (!confirm('이 건물을 철거합니다. 재료는 돌려받지 못합니다.')) return;
-  W().plots[+d.i] = null; playerAction('demolish', p.prod); afterChange();
+  askConfirm('이 건물을 철거합니다. 재료는 돌려받지 못합니다.', () => { W().plots[+d.i] = null; playerAction('demolish', p.prod); afterChange(); });
 };
 ACT.hqUp = () => {
   const w = W(), next = CONFIG.hq.levels[w.hqLevel]; if (!next || !canPay(next.cost)) return;
@@ -1597,7 +1618,7 @@ ACT.exportLog = d => {
   }
   if (d.f === 'cycles') return download(`nest-cycles-${seed}.csv`, toCsv(l.cycles, ['index', 'monster', 'species', 'eggTag', 'acquiredRun', 'hatchedRun', 'deployedRun', 'runsBetween', 'realMin', 'virtualMin', 'totalMin', 'within30', ...MOD_COLS]), 'text/csv');
 };
-ACT.resetLog = () => { if (!confirm('테스트 기록만 지웁니다(월드 진행은 유지).')) return; S.log = newLog(); afterChange(); toast('기록 초기화'); };
+ACT.resetLog = () => { askConfirm('테스트 기록만 지웁니다(월드 진행은 유지).', () => { S.log = newLog(); startVisit(); afterChange(); toast('기록 초기화'); }); };
 onNewGameHooks.push(() => startVisit());
 baseBanners.push(() => { const v = L().curVisit; return v ? `<div class="dim" style="font-size:12px;margin:-4px 0 8px">거점 방문 #${v.index} · 이번 방문 행동 ${v.seq.filter(t => MEANINGFUL.includes(t)).length}회</div>` : ''; });
 
